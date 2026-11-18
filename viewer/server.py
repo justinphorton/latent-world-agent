@@ -243,6 +243,8 @@ class Session:
             "seed": self.world.seed,
             "dayLength": DAY_LENGTH,
             "daylight": DAYLIGHT,
+            # how precisely the agent perceives tone and glow, so agent view can show it faithfully
+            "senses": {"toneLevels": self.senses.tone_levels, "glowLevels": self.senses.glow_levels},
             "directions": list(DIRECTIONS),
         }
 
@@ -299,6 +301,12 @@ class Session:
                 "onTry": self.attempt is not None and self.history is self.attempt,
             },
             "agentView": self._agent_view_ids() if self.agent_view else None,
+            # god view only: every weld as [x, y, z, axis] (axis 0 = east, 1 = north, 2 = up)
+            "welds": [
+                [int(x), int(y), int(z), axis]
+                for axis, welds in enumerate(world.state.welds)
+                for x, y, z in zip(*np.nonzero(welds))
+            ],
         }
 
     def _agent_view_ids(self) -> list[int]:

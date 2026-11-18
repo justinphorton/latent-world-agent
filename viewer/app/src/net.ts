@@ -11,6 +11,7 @@ export type Init = {
   seed: number;
   dayLength: number;
   daylight: number; // fraction of each day the sun is up (the rest is night)
+  senses: { toneLevels: number | null; glowLevels: number | null }; // how precisely the agent sees
   directions: string[];
 };
 
@@ -49,6 +50,7 @@ export type Tick = {
   // What replay can reach and where we are; tryFrom is set while trying something different.
   timeline: { start: number; head: number; now: number; tryFrom: number | null; onTry: boolean };
   agentView: number[] | null; // with agent view on: the ids of everything the agent perceives
+  welds: [number, number, number, number][]; // god view: each weld as [x, y, z, axis]
 };
 
 export type Inspected = Record<string, number | string | number[]> | null;

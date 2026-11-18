@@ -323,7 +323,7 @@ function HeatLegend() {
       <span className="num">{lo.toFixed(2)}</span>
       <div className="ramp" style={{ background: `linear-gradient(90deg, ${stops.join(",")})` }} />
       <span className="num">{hi.toFixed(2)}</span>
-      <span className="muted">· white = near cracking</span>
+      <span className="muted">· white = very hot</span>
     </div>
   );
 }

@@ -23,7 +23,7 @@ function jitter(id: number) {
 
 // Heat view colours: the "turbo" colour map (dark blue -> cyan -> green -> yellow -> red), stretched
 // over the warmth range that currently exists, so small differences are clearly visible.
-// Anything near its cracking point (warmth > 0.85) additionally glows white, whatever the range.
+// Anything very hot (warmth > 0.85) additionally glows white, whatever the range.
 export function turbo(t: number, out: THREE.Color) {
   t = Math.min(1, Math.max(0, t));
   const r = 0.13572138 + t * (4.6153926 + t * (-42.66032258 + t * (132.13108234 + t * (-152.94239396 + t * 59.28637943))));
@@ -71,6 +71,8 @@ export function Scene() {
       <Markers init={init} />
       <Underside init={init} />
       <Fireflies init={init} />
+      <Embers />
+      <Welds init={init} />
       <PerfMeter />
       <OrbitControls
         makeDefault
@@ -97,9 +99,46 @@ export function Scene() {
 type Shown = { pos: THREE.Vector3; target: THREE.Vector3; grow: number };
 type Slot = { entry: Shown; mesh: THREE.InstancedMesh; index: number; cover: boolean; j: number; shadowIndex: number };
 
-const MOSS_DRY = new THREE.Color("#9a8a4a");
-const RED_HOT = new THREE.Color("#ffb070");
+// ---------------------------------------------------------------------------
+// How things look. Everything comes from what the agent itself can perceive: material (colour),
+// tone (the fixed fingerprint) and glow (warmth). Events have no special signal: a sudden glow
+// jump flashes, and things that vanish leave an ember (hot: burned) or fade brown (cold: starved).
+// Agent view feeds this the agent's own coarse levels, so it shows exactly what the agent has.
+// ---------------------------------------------------------------------------
+
+const MOSS_DRY = new THREE.Color("#8a6d3a"); // starving moss browns
+const GLOW = new THREE.Color("#ffb45a"); // warm things brighten toward this
+const GLOW_HOT = new THREE.Color("#fff1c8"); // and very hot ones toward this
+const FLASH = new THREE.Color("#fff6d6"); // a sudden glow jump flashes briefly
 const UNSEEN = new THREE.Color("#23253a"); // agent view: what the agent can't perceive fades to this
+const FLASH_JUMP = 0.12; // a glow rise this sudden (between two pictures) counts as a flash
+
+const smooth = (lo: number, hi: number, v: number) => {
+  const t = Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
+  return t * t * (3 - 2 * t);
+};
+
+function appearance(base: THREE.Color, layer: string, tone: number, warmth: number, out: THREE.Color) {
+  out.copy(base).multiplyScalar(1 + tone * 0.28); // the fingerprint: a little lighter or darker
+  if (layer === "cover") out.lerp(MOSS_DRY, 0.85 * (1 - smooth(0.08, 0.45, warmth))); // moss health
+  out.lerp(GLOW, 0.65 * smooth(0.5, 1.0, warmth)); // warm things glow
+  if (warmth > 1) out.lerp(GLOW_HOT, Math.min(1, (warmth - 1) * 2)); // and very hot ones glow white-hot
+  return out;
+}
+
+// The agent sees tone and glow in levels; agent view shows the middle of the level it sees.
+function asPerceived(value: number, lo: number, hi: number, levels: number | null) {
+  if (levels === null) return value;
+  const level = Math.min(levels - 1, Math.floor(((Math.min(hi, Math.max(lo, value)) - lo) / (hi - lo)) * levels));
+  return lo + ((level + 0.5) / levels) * (hi - lo);
+}
+
+// Embers left by things that vanish, animated by <Embers />.
+type Ember = { pos: THREE.Vector3; color: THREE.Color; t: number };
+const embers: Ember[] = [];
+const EMBER_HOT = new THREE.Color("#ff8a3a");
+const EMBER_COLD = new THREE.Color("#6b5532");
+const MAX_EMBERS = 256;
 
 // Whether anything is animating this frame; shadows only need redrawing when something moves.
 const animation = { entities: true, body: true };
@@ -167,6 +206,11 @@ function Entities({ init }: { init: Init }) {
   //  - every frame, only the entities on the moving list are animated.
   const built = useRef<{ tick: unknown; heat: boolean; agent: boolean }>({ tick: null, heat: false, agent: false });
   const moving = useRef(new Map<number, Slot>());
+  // For events: what each thing looked like in the last picture, and what's flashing now.
+  type Last = { pos: THREE.Vector3; warmth: number; layer: string; perceived: boolean };
+  const last = useRef(new Map<number, Last>());
+  const lastTick = useRef(-1);
+  const flashes = useRef(new Map<number, { slot: Slot; base: THREE.Color; t: number }>());
 
   const placeMatrix = (slot: Slot) => {
     const { entry, cover, j } = slot;
@@ -195,8 +239,15 @@ function Entities({ init }: { init: Init }) {
     if (built.current.tick !== tick || built.current.heat !== store.heatView || built.current.agent !== store.agentView) {
       built.current = { tick, heat: store.heatView, agent: store.agentView };
       const { hidden, isBlock } = buriedBlocks(init, tick.entities);
-      // Agent view: things the agent can't perceive are drawn as dim grey shapes.
+      // Agent view: things the agent can't perceive are drawn as dim grey shapes, and what it does
+      // perceive is shown at its own coarse levels of tone and glow.
       const perceived = store.agentView && tick.agentView ? new Set(tick.agentView) : null;
+      const levels = perceived ? init.senses : { toneLevels: null, glowLevels: null };
+      // Flashes and embers only between consecutive pictures (not after a jump in the replay).
+      const step = tick.tick - lastTick.current;
+      const effects = step >= 1 && step <= 8;
+      lastTick.current = tick.tick;
+      const now = new Map<number, Last>();
       const counts = looks.map(() => 0);
       const seen = new Set<number>();
       moving.current.clear();
@@ -207,6 +258,7 @@ function Entities({ init }: { init: Init }) {
         const kind = init.kinds[kindIndex];
         if (!kind || kind.layer === "creature") continue;
         if (hidden.has(id)) {
+          now.set(id, { pos: toScene(init, x, y, z, new THREE.Vector3()), warmth, layer: kind.layer, perceived: false });
           if (core.current) {
             toScene(init, x, y, z, temp.position);
             temp.matrix.makeTranslation(temp.position.x, temp.position.y, temp.position.z);
@@ -234,16 +286,26 @@ function Entities({ init }: { init: Init }) {
         placeMatrix(slot);
         if (entry.pos.distanceToSquared(entry.target) > 1e-6 || entry.grow < 1) moving.current.set(id, slot);
 
-        // Colour: the kind's colour with its tone, or the heat ramp.
+        // Colour: from material, tone and glow (as the agent perceives them, in agent view), or the
+        // heat ramp. In agent view, what it can't perceive fades to a dim grey.
+        const sees = !perceived || perceived.has(id);
+        const shownTone = asPerceived(tone, -1, 1, levels.toneLevels);
+        const shownWarmth = asPerceived(warmth, 0, 1, levels.glowLevels);
         if (store.heatView) heatColor(warmth, temp.color);
-        else {
-          // Tone comes from the simulation: an imperfect hint at the block's hidden properties.
-          temp.color.copy(baseColors[lookIndex]).multiplyScalar(1 + tone * 0.28);
-          if (kind.layer === "cover") temp.color.lerp(MOSS_DRY, Math.max(0, 0.3 - warmth));
-          if (warmth > 0.75) temp.color.lerp(RED_HOT, Math.min(1, (warmth - 0.75) * 3));
-        }
-        if (perceived && !perceived.has(id)) temp.color.lerp(UNSEEN, 0.85);
+        else appearance(baseColors[lookIndex], kind.layer, shownTone, shownWarmth, temp.color);
+        if (!sees) temp.color.lerp(UNSEEN, 0.85);
         mesh.setColorAt(slot.index, temp.color);
+
+        // A sudden rise in glow flashes (that's how a pop or a hit shows up).
+        const before = last.current.get(id);
+        now.set(id, { pos: entry.target.clone(), warmth: shownWarmth, layer: kind.layer, perceived: sees });
+        const flash = flashes.current.get(id);
+        if (effects && sees && before && shownWarmth - before.warmth >= FLASH_JUMP) {
+          flashes.current.set(id, { slot, base: temp.color.clone(), t: 1 });
+        } else if (flash) {
+          flash.slot = slot;
+          flash.base.copy(temp.color);
+        }
         ids.current[lookIndex][slot.index] = id;
       }
 
@@ -265,6 +327,34 @@ function Entities({ init }: { init: Init }) {
       if (shown.current.size > seen.size + 200) {
         for (const id of shown.current.keys()) if (!seen.has(id)) shown.current.delete(id);
       }
+
+      // Things that vanished since the last picture leave an ember (if they were hot: burned) or
+      // fade brown (cold: starved). A big batch at once is a replay jump, not an event: skipped.
+      const gone = [...last.current].filter(([id, was]) => !now.has(id) && was.perceived);
+      if (effects && gone.length <= 60) {
+        for (const [, was] of gone) {
+          if (embers.length >= MAX_EMBERS) embers.shift();
+          const hot = was.warmth >= 0.6;
+          const pos = was.pos.clone();
+          if (was.layer === "cover") pos.y -= 0.4; // moss lies low on its block
+          embers.push({ pos, color: (hot ? EMBER_HOT : EMBER_COLD).clone(), t: 1 });
+        }
+      }
+      for (const id of flashes.current.keys()) if (!now.has(id)) flashes.current.delete(id);
+      last.current = now;
+    }
+
+    // Flashes fade out over about half a second.
+    for (const [id, flash] of flashes.current) {
+      flash.t -= delta * 2.2;
+      const { slot } = flash;
+      if (flash.t <= 0) {
+        slot.mesh.setColorAt(slot.index, flash.base);
+        flashes.current.delete(id);
+      } else {
+        slot.mesh.setColorAt(slot.index, temp.color.copy(flash.base).lerp(FLASH, flash.t * 0.85));
+      }
+      if (slot.mesh.instanceColor) slot.mesh.instanceColor.needsUpdate = true;
     }
 
     // Animate only what is moving or growing.
@@ -685,6 +775,80 @@ function PerfMeter() {
 }
 
 // Drifting specks of light at night. Pure decoration: they are not part of the simulation.
+// Embers: little glowing bits left where something vanished, drifting up and shrinking away.
+function Embers() {
+  const mesh = useRef<THREE.InstancedMesh | null>(null);
+  const geometry = useMemo(() => new THREE.IcosahedronGeometry(0.16, 0), []);
+  const material = useMemo(() => new THREE.MeshBasicMaterial({ toneMapped: false }), []);
+  useFrame((_, delta) => {
+    const m = mesh.current;
+    if (!m) return;
+    for (let i = embers.length - 1; i >= 0; i--) {
+      embers[i].t -= delta * 1.3;
+      if (embers[i].t <= 0) embers.splice(i, 1);
+    }
+    embers.forEach((ember, i) => {
+      ember.pos.y += delta * 0.7;
+      temp.scale.setScalar(Math.max(0.01, ember.t));
+      temp.quaternion.setFromEuler(temp.euler.set(ember.t * 3, ember.t * 2, 0));
+      temp.matrix.compose(ember.pos, temp.quaternion, temp.scale);
+      m.setMatrixAt(i, temp.matrix);
+      m.setColorAt(i, ember.color);
+    });
+    m.count = embers.length;
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  });
+  return (
+    <instancedMesh
+      ref={(m) => {
+        mesh.current = m;
+        if (m && !m.instanceColor) m.setColorAt(0, new THREE.Color());
+      }}
+      args={[geometry, material, MAX_EMBERS]}
+      frustumCulled={false}
+      raycast={() => null}
+    />
+  );
+}
+
+// God view only: thin glowing seams between welded blocks (the agent can't see welds; it has to
+// find them by pushing). Hidden in agent view.
+const SEAM = new THREE.Color("#ff9d4d");
+function Welds({ init }: { init: Init }) {
+  const mesh = useRef<THREE.InstancedMesh | null>(null);
+  const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
+  const material = useMemo(() => new THREE.MeshBasicMaterial({ color: SEAM, toneMapped: false }), []);
+  const built = useRef<unknown>(null);
+  useFrame(() => {
+    const m = mesh.current;
+    const tick = store.tick;
+    if (!m || !tick || (built.current === tick && m.visible === !store.agentView)) return;
+    built.current = tick;
+    m.visible = !store.agentView;
+    const welds = tick.welds ?? [];
+    welds.slice(0, m.instanceMatrix.count).forEach(([x, y, z, axis], i) => {
+      // halfway between the two welded blocks; world axis 0 = east (+x), 1 = north (-z), 2 = up (+y)
+      toScene(init, x + (axis === 0 ? 0.5 : 0), y + (axis === 1 ? 0.5 : 0), z + (axis === 2 ? 0.5 : 0), temp.position);
+      temp.scale.set(axis === 0 ? 0.05 : 0.8, axis === 2 ? 0.05 : 0.8, axis === 1 ? 0.05 : 0.8);
+      temp.matrix.compose(temp.position, temp.quaternion.identity(), temp.scale);
+      m.setMatrixAt(i, temp.matrix);
+    });
+    m.count = Math.min(welds.length, m.instanceMatrix.count);
+    m.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <instancedMesh
+      ref={(m) => {
+        mesh.current = m;
+      }}
+      args={[geometry, material, 4096]}
+      frustumCulled={false}
+      raycast={() => null}
+    />
+  );
+}
+
 function Fireflies({ init }: { init: Init }) {
   const night = useStore((s) => (s.tick?.sun ?? 1) < 0.08);
   if (!night) return null;
