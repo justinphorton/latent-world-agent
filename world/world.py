@@ -2,7 +2,7 @@
 
 This is the only place that knows the order things happen in. Each tick:
     1. the body acts            (move / grasp / release / hit / wait)
-    2. the laws that are on, in laws.LAWS order: gravity, sun, flow, pop, life, radiation
+    2. the laws that are on, in laws.LAWS order: gravity, sun, flow, pop, life, weld, radiation
     3. checks                   (state consistent, energy books balance, nothing floating)
 """
 
@@ -53,7 +53,7 @@ class Snapshot:
 class World:
     """One running world.
 
-    Which laws run: pass `rung` (1, 2 or 3, see laws.RUNGS) or an explicit set of law names in
+    Which laws run: pass `rung` (1 to 4, see laws.RUNGS) or an explicit set of law names in
     `laws`. Any combination is valid, because no law depends on another being on.
 
     `check_every` sets how often every invariant is verified: 1 = after every tick (the default,
@@ -61,7 +61,7 @@ class World:
     runs without the viewer).
     """
 
-    def __init__(self, seed: int = 0, rung: int = 3, laws: Iterable[str] | None = None, check_every: int = 1):
+    def __init__(self, seed: int = 0, rung: int = 4, laws: Iterable[str] | None = None, check_every: int = 1):
         chosen = frozenset(laws) if laws is not None else RUNGS[rung]
         unknown = chosen - set(LAWS)
         if unknown:
@@ -97,6 +97,8 @@ class World:
             result.popped = laws.pop(self.state)
         if "life" in on:
             laws.life(self.state, self.rng)
+        if "weld" in on:
+            laws.weld(self.state)
         if "radiation" in on:
             laws.radiate(self.state)
         self.tick += 1

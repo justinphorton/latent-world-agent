@@ -227,6 +227,7 @@ DEFAULT_RECIPES: tuple[Kind | None, ...] = (
 )
 
 Pos = tuple[int, int, int]  # (x, y, z), z points up
+AXES = ((1, 0, 0), (0, 1, 0), (0, 0, 1))  # the three directions a weld can run (east, north, up)
 
 # The named lines in the energy books: the only ways energy enters or leaves the world.
 #   start      energy given to things as the world is built
@@ -374,6 +375,10 @@ class WorldState:
       - the world's recipe book (`recipes`), frozen once the world is made
       - the energy books (`books`): total energy always equals the sum of the named lines
       - a log of every nudge made by hand
+      - welds between touching blocks (`welds`): welds[axis][p] joins the block at p to the block
+        one step along that axis (0 = east, 1 = north, 2 = up). A weld only ever joins two blocks:
+        moving a block on its own or removing it breaks its welds; move_together carries the
+        welds inside a group that moves as one.
 
     WorldState stores and moves things and keeps the books; it knows nothing about physics.
     Laws read the arrays freely, and change energy only through move_energy (energy moving
@@ -391,6 +396,61 @@ class WorldState:
         self.next_id = 1
         self.books: dict[str, float] = {line: 0.0 for line in OUTSIDE}
         self.log: list[dict] = []  # every nudge, in order
+        self.welds: list[np.ndarray] = [np.zeros(self.shape, bool) for _ in AXES]
+
+    # --- welds ---
+
+    def welded_to(self, pos: Pos) -> list[Pos]:
+        """The spots of every block welded to the block at pos."""
+        pos = _as_pos(pos)
+        found = []
+        for axis, step in enumerate(AXES):
+            ahead = _plus(pos, step)
+            behind = _minus(pos, step)
+            if self.in_bounds(ahead) and self.welds[axis][pos]:
+                found.append(ahead)
+            if self.in_bounds(behind) and self.welds[axis][behind]:
+                found.append(behind)
+        return found
+
+    def has_welds(self, pos: Pos) -> bool:
+        return bool(self.welded_to(pos))
+
+    def weld(self, a: Pos, b: Pos) -> None:
+        """Weld two face-touching blocks together."""
+        axis, low = self._weld_slot(a, b)
+        self.welds[axis][low] = True
+
+    def unweld(self, a: Pos, b: Pos) -> None:
+        axis, low = self._weld_slot(a, b)
+        self.welds[axis][low] = False
+
+    def break_welds(self, pos: Pos) -> None:
+        """Break every weld of the block at pos."""
+        for other in self.welded_to(pos):
+            self.unweld(pos, other)
+
+    def weld_group(self, pos: Pos, only=None) -> set[Pos]:
+        """Every block joined to the block at pos through welds (including itself). With `only`,
+        a function (a, b) -> bool, only welds it accepts are followed."""
+        group, frontier = {_as_pos(pos)}, [_as_pos(pos)]
+        while frontier:
+            here = frontier.pop()
+            for other in self.welded_to(here):
+                if other not in group and (only is None or only(here, other)):
+                    group.add(other)
+                    frontier.append(other)
+        return group
+
+    def _weld_slot(self, a: Pos, b: Pos) -> tuple[int, Pos]:
+        a, b = _as_pos(a), _as_pos(b)
+        difference = tuple(q - p for p, q in zip(a, b))
+        for axis, step in enumerate(AXES):
+            if difference == step:
+                return axis, a
+            if difference == tuple(-s for s in step):
+                return axis, b
+        raise ValueError(f"{a} and {b} don't share a face")
 
     # --- looking things up ---
 
@@ -597,6 +657,8 @@ class WorldState:
                     raise ValueError(f"energy can't go to {to!r}")
             else:
                 self.locate(receiver)  # check every receiver exists before anything changes
+        if layer == "block":
+            self.break_welds(pos)
         record = self._take_record(layer, pos)
         amount = record["energy"] + record["stored"]
         for receiver in receivers:
@@ -606,7 +668,8 @@ class WorldState:
         return record
 
     def move(self, layer: str, src: Pos, dst: Pos) -> None:
-        """Move a thing within its layer, carrying every field with it.
+        """Move a thing within its layer, carrying every field with it. A block moved on its own
+        breaks its welds (to move a welded group, use move_together).
 
         Fails loudly if there is nothing at src or something already at dst, so two things
         can never end up in one spot.
@@ -618,7 +681,36 @@ class WorldState:
             raise ValueError(f"{dst} is outside the world")
         if self.layers[layer]["kind"][dst] != 0:
             raise ValueError(f"{layer} spot {dst} is already occupied")
+        if layer == "block":
+            self.break_welds(src)
         self._write_record(layer, dst, self._take_record(layer, src))
+
+    def move_together(self, things: list[tuple[str, Pos]], offset: Pos) -> None:
+        """Move several things by the same offset at once, as one rigid piece. Welds between
+        blocks that move together are carried along; welds to blocks left behind break.
+
+        Every destination must be empty or be vacated by this same move, so nothing ever ends up
+        sharing a spot (fails loudly, before anything changes, if not).
+        """
+        things = [(layer, _as_pos(pos)) for layer, pos in things]
+        moving = set(things)
+        for layer, pos in things:
+            dst = _plus(pos, offset)
+            if self.layers[layer]["kind"][pos] == 0:
+                raise ValueError(f"nothing in {layer} at {pos}")
+            if not self.in_bounds(dst):
+                raise ValueError(f"{dst} is outside the world")
+            if self.layers[layer]["kind"][dst] != 0 and (layer, dst) not in moving:
+                raise ValueError(f"{layer} spot {dst} is already occupied")
+        blocks = {pos for layer, pos in things if layer == "block"}
+        kept = [(a, b) for a in blocks for b in self.welded_to(a) if b in blocks and a < b]
+        for pos in blocks:
+            self.break_welds(pos)
+        records = [(layer, pos, self._take_record(layer, pos)) for layer, pos in things]
+        for layer, pos, record in records:
+            self._write_record(layer, _plus(pos, offset), record)
+        for a, b in kept:
+            self.weld(_plus(a, offset), _plus(b, offset))
 
     # --- nudges: the experimenter changing the world by hand (never the agent) ---
 
@@ -677,6 +769,7 @@ class WorldState:
         clone.next_id = self.next_id
         clone.books = dict(self.books)
         clone.log = json.loads(json.dumps(self.log))
+        clone.welds = [w.copy() for w in self.welds]
         return clone
 
     def save(self, path: str | Path) -> None:
@@ -702,6 +795,7 @@ class WorldState:
             "recipes": [None if kind is None else dataclasses.asdict(kind) for kind in self.recipes],
         }
         arrays = {f"{layer}.{field}": array for layer, fields in self.layers.items() for field, array in fields.items()}
+        arrays.update({f"weld.{axis}": welds for axis, welds in enumerate(self.welds)})
         return arrays, meta
 
     @classmethod
@@ -725,6 +819,11 @@ class WorldState:
         state.next_id = meta["next_id"]
         state.books = {line: float(meta["books"][line]) for line in OUTSIDE}
         state.log = meta["log"]
+        names = set(getattr(arrays, "files", arrays))  # saves from before welding have no weld arrays
+        state.welds = [
+            np.array(arrays[f"weld.{axis}"], dtype=bool) if f"weld.{axis}" in names else np.zeros(state.shape, bool)
+            for axis in range(len(AXES))
+        ]
         state.check()
         return state
 
@@ -766,6 +865,14 @@ class WorldState:
             raise AssertionError("id index lists things that don't exist")
         if seen and self.next_id <= max(seen):
             raise AssertionError("next_id would reuse an existing id")
+        block = self.occupied("block")
+        for axis, step in enumerate(AXES):
+            here, ahead = pair_slices(self.shape, step)
+            welds = self.welds[axis]
+            if np.any(welds & ~_reaches(self.shape, step)):
+                raise AssertionError("a weld reaches out of the world")
+            if np.any(welds[here] & ~(block[here] & block[ahead])):
+                raise AssertionError("a weld doesn't join two blocks")
         self.check_books()
 
     # --- internals ---
@@ -815,6 +922,28 @@ class WorldState:
         for field in FIELDS:
             arrays[field][pos] = record[field]
         self.where[record["id"]] = (layer, pos)
+
+
+def _plus(pos: Pos, offset) -> Pos:
+    return (pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2])
+
+
+def _minus(pos: Pos, offset) -> Pos:
+    return (pos[0] - offset[0], pos[1] - offset[1], pos[2] - offset[2])
+
+
+def pair_slices(shape, step) -> tuple[tuple[slice, ...], tuple[slice, ...]]:
+    """Slices pairing every spot p (first) with p + step (second), for a non-negative unit step."""
+    here = tuple(slice(0, n - d) for n, d in zip(shape, step))
+    ahead = tuple(slice(d, n) for n, d in zip(shape, step))
+    return here, ahead
+
+
+def _reaches(shape, step) -> np.ndarray:
+    """True for every spot whose neighbour one step along `step` is inside the world."""
+    mask = np.zeros(shape, bool)
+    mask[pair_slices(shape, step)[0]] = True
+    return mask
 
 
 def _ids(targets: Target) -> list[int]:

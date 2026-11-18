@@ -11,11 +11,11 @@ The laws, in the order they run each tick (world.py runs them; each one can be s
   flow       energy moves between touching things, from warmer to cooler
   pop        stores fill; a full store on a warm enough thing pops into its neighbours
   life       living things spread when well fed and die when starving
+  weld       hot blocks go soft, and soft blocks weld to the blocks they touch
   radiation  faces open to the air lose energy to the sky
-(Welding is designed but not built yet; it will run between life and radiation.)
 
 Rungs are suggested sets of switches, each adding one new kind of behaviour:
-  1 base physics   2 + living matter   3 + store and pop   (4 + welding, later)
+  1 base physics   2 + living matter   3 + store and pop   4 + welding
 """
 
 from __future__ import annotations
@@ -25,13 +25,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from world.state import CONTACTS, ENERGY_FIELDS, LAYERS, Entity, Pos, WorldState
+from world.state import AXES, CONTACTS, ENERGY_FIELDS, LAYERS, Entity, Pos, WorldState, pair_slices
 
-LAWS = ("gravity", "sun", "flow", "pop", "life", "radiation")  # the order they run in
+LAWS = ("gravity", "sun", "flow", "pop", "life", "weld", "radiation")  # the order they run in
 RUNGS: dict[int, frozenset[str]] = {
     1: frozenset({"gravity", "sun", "flow", "radiation"}),
     2: frozenset({"gravity", "sun", "flow", "radiation", "life"}),
     3: frozenset({"gravity", "sun", "flow", "radiation", "life", "pop"}),
+    4: frozenset({"gravity", "sun", "flow", "radiation", "life", "pop", "weld"}),
 }
 
 DAY_LENGTH = 900  # ticks per full day and night
@@ -40,6 +41,7 @@ SUN_POWER = 0.025  # energy per tick reaching the top of a column at noon
 RADIATION = 0.02  # energy lost per tick per exposed face, times warmth
 MAX_FLOW_STIFFNESS = 0.4  # flow is split into substeps if one tick would move energy too abruptly
 GROUND_PULL = 0.01  # added to every spot's weight when living things pick where to spread
+SOFT_GAP = 0.1  # a soft block only hardens again once this much cooler than its softening point
 
 _SIDES = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # north, east, south, west: the fixed order for sliding
 
@@ -64,9 +66,14 @@ def is_supported(state: WorldState, layer: str, pos: Pos) -> bool:
     It is held up if it sits on the world's floor (z = 0), or if the spot directly below holds
     something from one of the layers it can rest on (LAYERS[layer].supported_by).
 
+    A welded block is held up if its whole welded group is (any part of it held up from below),
+    which is what lets welded overhangs and bridges stand.
+
     One exception: a creature that has fallen onto another creature slides off to the side, but
     if every side is blocked it has nowhere to go, so it rests on the other's head.
     """
+    if layer == "block" and state.has_welds(pos):
+        return _group_supported(state, state.weld_group(pos))
     x, y, z = pos
     if z == 0:
         return True
@@ -79,20 +86,70 @@ def is_supported(state: WorldState, layer: str, pos: Pos) -> bool:
 def settle(state: WorldState) -> list[Fall]:
     """Let everything that isn't supported fall straight down until it is.
 
-    Works from the bottom of the world upward, so a whole unsupported stack falls together:
-    the lowest piece lands first and the pieces above land on it. Everything is resolved within
-    one call, so after settle() nothing in the world is floating.
+    Welded groups first (each falls as one rigid piece), then everything else from the bottom of
+    the world upward, so a whole unsupported stack falls together: the lowest piece lands first
+    and the pieces above land on it. Repeats until nothing moves (a group can lose its support
+    when a block under it falls), so after settle() nothing in the world is floating.
     """
     events: list[Fall] = []
     _, _, height = state.shape
-    for z in range(1, height):
-        for layer in LAYERS:
-            occupied = state.occupied(layer)[:, :, z]
-            for x, y in zip(*np.nonzero(occupied)):
-                pos = (int(x), int(y), z)
-                if state.layers[layer]["kind"][pos] != 0 and not is_supported(state, layer, pos):
-                    events.extend(_drop(state, layer, pos))
-    return events
+    while True:
+        moved = len(events)
+        for group in _welded_groups(state):
+            if not _group_supported(state, group):
+                events.extend(_drop_group(state, group))
+        for z in range(1, height):
+            for layer in LAYERS:
+                occupied = state.occupied(layer)[:, :, z]
+                for x, y in zip(*np.nonzero(occupied)):
+                    pos = (int(x), int(y), z)
+                    if state.layers[layer]["kind"][pos] != 0 and not is_supported(state, layer, pos):
+                        events.extend(_drop(state, layer, pos))
+        if len(events) == moved:
+            return events
+
+
+def _welded_groups(state: WorldState) -> list[set[Pos]]:
+    """Every group of welded blocks, lowest first."""
+    welded: set[Pos] = set()
+    for axis, step in enumerate(AXES):
+        for p in zip(*np.nonzero(state.welds[axis])):
+            p = (int(p[0]), int(p[1]), int(p[2]))
+            welded.update({p, (p[0] + step[0], p[1] + step[1], p[2] + step[2])})
+    groups = []
+    while welded:
+        group = state.weld_group(welded.pop())
+        welded -= group
+        groups.append(group)
+    return sorted(groups, key=lambda g: min(p[2] for p in g))
+
+
+def _group_supported(state: WorldState, group: set[Pos]) -> bool:
+    """A welded group is held up if any of its blocks rests on the floor, on a block outside the
+    group, or on a creature."""
+    for x, y, z in group:
+        if z == 0:
+            return True
+        below = (x, y, z - 1)
+        if below in group:
+            continue
+        if state.layers["block"]["kind"][below] != 0 or state.layers["creature"]["kind"][below] != 0:
+            return True
+    return False
+
+
+def _drop_group(state: WorldState, group: set[Pos]) -> list[Fall]:
+    """Lower an unsupported welded group, one step at a time, as one rigid piece, until it rests.
+    Moss in its way is buried, its energy going into the block that lands on it."""
+    starts = {pos: int(state.layers["block"]["id"][pos]) for pos in group}
+    while not _group_supported(state, group):
+        for x, y, z in group:
+            moss = state.entity_at("cover", (x, y, z - 1))
+            if moss is not None and (x, y, z - 1) not in group:
+                state.remove(moss.id, to=int(state.layers["block"]["id"][x, y, z]))
+        state.move_together([("block", pos) for pos in group], (0, 0, -1))
+        group = {(x, y, z - 1) for x, y, z in group}
+    return [Fall(entity_id, start, state.locate(entity_id)[1]) for start, entity_id in starts.items()]
 
 
 def _drop(state: WorldState, layer: str, pos: Pos) -> list[Fall]:
@@ -372,6 +429,33 @@ def _spread(state: WorldState, parent_id: int, rng: np.random.Generator) -> None
     cost[x, y, z] = kind.grow_cost
     state.move_energy({(layer, "stored"): -cost, (layer, "energy"): cost})
     state.spawn(kind.name, spot, source=parent_id, energy=kind.grow_cost, rng=rng)
+
+
+# ---------------------------------------------------------------------------
+# Welding
+# ---------------------------------------------------------------------------
+
+
+def weld(state: WorldState) -> None:
+    """Hot blocks go soft, and soft blocks weld to every block they touch.
+
+    1. Softening: a block goes soft once its warmth reaches its softening point (soften_at), and
+       only hardens again once it has cooled SOFT_GAP below it, so it doesn't flicker at the
+       edge. Materials that never soften have an infinite softening point. Sunlight alone never
+       gets stone that hot: softening always takes deliberate heat (fire, pops, hitting).
+    2. Welding: wherever a soft block touches another block (any material), they weld. Welds stay
+       when things cool: a welded group then falls and is pushed as one piece. Welds come apart
+       by pushing a soft block away, or by hitting a block hard (the body does both).
+    """
+    blocks = state.layers["block"]
+    present = blocks["kind"] != 0
+    warmth = _warmth(state, "block")
+    soften_at = blocks["soften_at"]
+    soft = present & ((warmth >= soften_at) | (blocks["soft"] & (warmth >= soften_at - SOFT_GAP)))
+    blocks["soft"][:] = soft
+    for axis, step in enumerate(AXES):
+        here, ahead = pair_slices(state.shape, step)
+        state.welds[axis][here] |= present[here] & present[ahead] & (soft[here] | soft[ahead])
 
 
 def _on_ground(state: WorldState, pos: Pos) -> bool:

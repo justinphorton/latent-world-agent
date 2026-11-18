@@ -1,18 +1,21 @@
 """How a body acts in the world.
 
 The body is an ordinary thing in the creature layer. This file adds what only a body does:
-six verbs, each with one clear job, aimed in one of 4 directions (or "here", its own spot):
+seven verbs, each with one clear job, aimed in one of 4 directions (or "here", its own spot):
 
     move      moves only the body: walk, climb one step up, drop down any distance
     push      moves blocks sideways: shoves the whole row in front one step, and follows
+    pull      the mirror of push: steps back, and the block in front comes along
     pick_up   moves one block (or moss) up onto the head
     put_down  moves what's on the head down: in front, or under the body (pillaring up)
-    hit       strikes what's in front: a jolt of energy goes into it
+    hit       strikes what's in front: a jolt of energy goes into it (a hard one breaks welds)
     wait      does nothing (the world keeps going)
 
-Push and pick up mirror each other: push is horizontal, for heavy loads and whole rows, and
-cheap; pick up is vertical, one block at a time, with a lower weight limit, and costly. The
-same 23 actions exist on every rung: the body never depends on which laws are switched on.
+Push/pull and pick up/put down mirror each other: push and pull are horizontal, for heavy loads,
+whole rows and welded pieces, and cheap; pick up is vertical, one loose block at a time, with a
+lower weight limit, and costly. Whatever rests on what's pushed or pulled rides along, and blocks
+welded to it come too (unless the weld is soft, then it pulls apart). The same 27 actions exist
+on every rung: the body never depends on which laws are switched on.
 
 The body is part of the energy economy. Effort is paid from its own energy into whatever it acted
 on (a hit warms the target, a push warms the pushed block, a step warms the ground), so acting
@@ -44,6 +47,7 @@ PUSH_COST = 0.05  # per unit of mass pushed, into the block pushed directly
 LIFT_COST = 0.05  # per unit of mass picked up, into what was picked up
 PLACE_COST = 0.02  # per unit of mass, to set something down carefully, into it
 HIT_ENERGY = 0.5  # per unit of striking mass, out of the body and into the target
+WELD_STRENGTH = 0.5  # a hit with at least this much jolt breaks the target's welds (bare hands: 0.35)
 
 # Four directions, matching how the physics works: energy flows across faces, never corners.
 DIRECTIONS: dict[str, tuple[int, int]] = {"n": (0, 1), "e": (1, 0), "s": (0, -1), "w": (-1, 0)}
@@ -51,6 +55,7 @@ HERE = "here"  # pick_up / put_down only: the body's own column
 AIMS: dict[str, tuple[str | None, ...]] = {
     "move": tuple(DIRECTIONS),
     "push": tuple(DIRECTIONS),
+    "pull": tuple(DIRECTIONS),
     "pick_up": (*DIRECTIONS, HERE),
     "put_down": (*DIRECTIONS, HERE),
     "hit": tuple(DIRECTIONS),
@@ -68,7 +73,7 @@ class Action:
     direction: str | None = None
 
 
-ACTIONS: tuple[Action, ...] = tuple(Action(verb, aim) for verb, aims in AIMS.items() for aim in aims)  # all 23
+ACTIONS: tuple[Action, ...] = tuple(Action(verb, aim) for verb, aims in AIMS.items() for aim in aims)  # all 27
 
 
 @dataclass
@@ -180,6 +185,7 @@ class Body:
             handler = {
                 "move": self._move,
                 "push": self._push,
+                "pull": self._pull,
                 "pick_up": self._pick_up,
                 "put_down": self._put_down,
                 "hit": self._hit,
@@ -221,45 +227,26 @@ class Body:
             fb.note = "blocked"
 
     def _push(self, direction: str, fb: Feedback) -> None:
-        """Shove the row of blocks in front one spot along the ground, and step after it.
+        """Shove the block in front one spot along the ground, and step after it.
 
-        The whole row moves together, and anything resting on it (blocks stacked on top, moss
-        lying on it) rides along: you push the pile. All of it counts toward PUSH_STRENGTH. It
-        only slides along the ground: never up a step, never off the island. A block pushed over
-        a drop falls (gravity runs after actions). A block pushed onto moss buries it.
+        Everything that has to come along moves with it as one piece (see _gather): the rest of
+        the row, whatever rests on top, and blocks welded to any of it. All of it counts toward
+        PUSH_STRENGTH. It only slides along the ground: never up a step, never off the island.
+        Anything pushed over a drop falls (gravity runs after actions); onto moss, it buries it.
         """
         x, y, z = self.pos
         dx, dy = DIRECTIONS[direction]
-        row = []
-        k = 1
-        while (block := self.state.entity_at("block", (x + dx * k, y + dy * k, z))) is not None:
-            row.append(block)
-            k += 1
-        if not row:
+        front = self.state.entity_at("block", (x + dx, y + dy, z))
+        if front is None:
             fb.note = "nothing to push"
             return
-        riders = {block.id: self._stack_on(block.pos) for block in row}  # what rests on each
-        fb.warmth = row[0].warmth
-        mass = sum(b.mass for b in row) + sum(
-            self.state.entity_at(layer, pos).mass for stack in riders.values() for layer, pos in stack  # type: ignore[union-attr]
-        )
-        fb.strain = min(1.0, mass / PUSH_STRENGTH)
-        if mass > PUSH_STRENGTH:
-            fb.note = "it won't budge"
-            return
-        end = (x + dx * k, y + dy * k, z)
-        last_riders = riders[row[-1].id]
-        if (
-            not self._is_ground(end[0], end[1])
-            or not self._room_for("block", end, burying=True)
-            or not all(self._room_for(layer, (end[0], end[1], p[2])) for layer, p in last_riders)
-        ):
-            fb.strain = 1.0
-            fb.note = "no room to push it into"
+        fb.warmth = front.warmth
+        offset = (dx, dy, 0)
+        things, mass = self._gather(front, offset, shove=True)
+        if not self._can_shift(things, mass, offset, fb):
             return
         new_spot = (x + dx, y + dy, z)
-        carried = self.carried()
-        if not all(self._room_for(layer, (new_spot[0], new_spot[1], p[2])) for layer, p in carried):
+        if not all(self._free_after(things, offset, layer, (x + dx, y + dy, p[2])) for layer, p in self.carried()):
             fb.note = "no headroom for what I'm carrying"
             return
         cost = PUSH_COST * mass
@@ -267,17 +254,123 @@ class Body:
             fb.note = "too tired to push it"
             return
 
-        if self.state.entity_at("cover", end) is not None:
-            absorb(self.state, "cover", end, into=row[-1])  # pushed onto moss: buries it
-        self._spend(cost, into=row[0])  # the friction heat goes into the block pushed directly
-        for block in reversed(row):  # far end first, so each column moves into an empty one
-            stack = riders[block.id]
-            self.state.move("block", block.pos, (block.pos[0] + dx, block.pos[1] + dy, z))
-            for layer, (sx, sy, sz) in stack:
-                self.state.move(layer, (sx, sy, sz), (sx + dx, sy + dy, sz))
+        self._spend(cost, into=front)  # the friction heat goes into the block pushed directly
+        self._shift(things, offset)
         self._relocate(new_spot, fb, climbing=False)
         fb.spent += cost
         fb.note = "pushed it"
+
+    def _pull(self, direction: str, fb: Feedback) -> None:
+        """The mirror of push: step back one spot, and the block in front comes along into the
+        spot just left, with whatever rests on it and whatever is welded to it (but not the rest
+        of a row: only what's attached). Stepping back has to be a plain step on level ground."""
+        x, y, z = self.pos
+        dx, dy = DIRECTIONS[direction]
+        front = self.state.entity_at("block", (x + dx, y + dy, z))
+        if front is None:
+            fb.note = "nothing to pull"
+            return
+        fb.warmth = front.warmth
+        back = (x - dx, y - dy, z)
+        if not self._is_ground(back[0], back[1]) or self._blocked(back) or not self._standable((back[0], back[1], z - 1)):
+            fb.note = "no room to step back"
+            return
+        if not all(self._room_for(layer, (back[0], back[1], p[2])) for layer, p in self.carried()):
+            fb.note = "no headroom behind me for what I'm carrying"
+            return
+        offset = (-dx, -dy, 0)
+        things, mass = self._gather(front, offset, shove=False)
+        if not self._can_shift(things, mass, offset, fb, vacating=self.pos):
+            return
+        cost = PUSH_COST * mass
+        if not self._can_afford(cost + self._step_cost(climbing=False)):
+            fb.note = "too tired to pull it"
+            return
+
+        self._relocate(back, fb, climbing=False)  # step back first: the pulled block takes my spot
+        self._spend(cost, into=front)
+        self._shift(things, offset)
+        fb.spent += cost
+        fb.note = "pulled it"
+
+    def _gather(self, start: Entity, offset: Pos, shove: bool) -> tuple[list[tuple[str, Pos]], float]:
+        """Everything that has to move with `start` when it slides by `offset`, and its mass:
+          - whatever rests on top of a moving block rides along (blocks, and moss lying on it)
+          - blocks welded to a moving block come too, if the weld is set (both sides hard); a
+            weld to a soft block is pliable and just pulls apart
+          - when shoving, any block in the way of a moving block is shoved too
+        Stops gathering as soon as it's heavier than PUSH_STRENGTH (it won't budge anyway)."""
+        state = self.state
+        soft = state.layers["block"]["soft"]
+        things: dict[tuple[str, Pos], None] = {}
+        mass = 0.0
+        frontier = [("block", start.pos)]
+        while frontier and mass <= PUSH_STRENGTH:
+            layer, pos = frontier.pop()
+            entity = state.entity_at(layer, pos)
+            if (layer, pos) in things or entity is None:
+                continue
+            things[(layer, pos)] = None
+            mass += entity.mass
+            if layer != "block":
+                continue
+            above = (pos[0], pos[1], pos[2] + 1)
+            if state.in_bounds(above):
+                for rider in ("block", "cover"):
+                    if state.entity_at(rider, above) is not None:
+                        frontier.append((rider, above))
+            for other in state.welded_to(pos):
+                if not (soft[pos] or soft[other]):
+                    frontier.append(("block", other))
+            ahead = (pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2])
+            if shove and state.in_bounds(ahead) and state.entity_at("block", ahead) is not None:
+                frontier.append(("block", ahead))
+        return list(things), mass
+
+    def _can_shift(self, things, mass: float, offset: Pos, fb: Feedback, vacating: Pos | None = None) -> bool:
+        """Whether everything gathered can slide by offset: light enough, staying on the island,
+        and with room to go (moss in the way gets buried; the body's spot counts as free if it is
+        stepping out of it). Sets strain and a note."""
+        fb.strain = min(1.0, mass / PUSH_STRENGTH)
+        if mass > PUSH_STRENGTH:
+            fb.note = "it won't budge"
+            return False
+        for layer, pos in things:
+            dst = (pos[0] + offset[0], pos[1] + offset[1], pos[2] + offset[2])
+            if not self.state.in_bounds(dst) or (layer == "block" and not self._is_ground(dst[0], dst[1])):
+                fb.strain, fb.note = 1.0, "no room to move it there"
+                return False
+            for other in BLOCKING:
+                if dst == vacating and other == "creature":
+                    continue
+                if self.state.entity_at(other, dst) is not None and (other, dst) not in things:
+                    fb.strain, fb.note = 1.0, "no room to move it there"
+                    return False
+            if layer == "cover" and self.state.entity_at("cover", dst) is not None and ("cover", dst) not in things:
+                fb.strain, fb.note = 1.0, "no room to move it there"
+                return False
+        return True
+
+    def _free_after(self, things, offset: Pos, layer: str, pos: Pos) -> bool:
+        """Whether a thing of `layer` would have room at pos once `things` have slid by offset."""
+        moving = {p for _, p in things}
+        arriving = {(p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]) for _, p in things}
+        if pos in arriving:
+            return False
+        if pos in moving:
+            return True
+        return self._room_for(layer, pos)
+
+    def _shift(self, things, offset: Pos) -> None:
+        """Slide everything gathered by offset as one piece; moss in the way of a block is buried."""
+        state = self.state
+        moving = set(things)
+        for layer, (x, y, z) in things:
+            dst = (x + offset[0], y + offset[1], z + offset[2])
+            moss = state.entity_at("cover", dst)
+            if layer == "block" and moss is not None and ("cover", dst) not in moving:
+                state.remove(moss.id, to=int(state.layers["block"]["id"][x, y, z]))
+        state.move_together(things, offset)
 
     def _relocate(self, target: Pos, fb: Feedback, climbing: bool) -> None:
         """Move the body (with everything on its head) to target, if there is room and it has the
@@ -335,6 +428,10 @@ class Body:
         fb.warmth = target.warmth
         if target.layer == "creature":
             fb.note = "can't pick that up"  # creatures never stand on creatures, heads included
+            return
+        if target.layer == "block" and self.state.has_welds(target.pos):
+            fb.strain = 1.0
+            fb.note = "it's stuck to something"  # welded pieces can be pushed or pulled, not lifted
             return
         fb.strain = min(1.0, target.mass / LIFT_STRENGTH)
         if target.mass > LIFT_STRENGTH:
@@ -415,7 +512,8 @@ class Body:
 
         The striker's mass sets the force: HIT_ENERGY per unit of mass moves out of the body and
         into the target, so heavy tools hit harder and tire the body faster. Heavy targets kick
-        back (strain). That's all a hit does: one jolt in, recoil out.
+        back (strain). A jolt of at least WELD_STRENGTH (more than bare hands give) breaks the
+        target's welds: welds take heat to make and one sharp blow to break.
         """
         target = self.hand_target(direction)
         if target is None:
@@ -434,6 +532,9 @@ class Body:
         fb.strain = min(1.0, target.mass / PUSH_STRENGTH)  # recoil: heavy things push back
         fb.warmth = target.warmth
         fb.note = f"hit it with {'the ' + tool.name if tool else 'my body'}"
+        if target.layer == "block" and jolt >= WELD_STRENGTH and self.state.has_welds(target.pos):
+            self.state.break_welds(target.pos)
+            fb.note += ", and it broke loose"
 
     # --- energy ---
 

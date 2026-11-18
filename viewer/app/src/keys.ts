@@ -37,8 +37,11 @@ function facing() {
   return store.tick?.body.facing ?? "n";
 }
 
-// Space is both "wait" (a tap) and "push instead of step" (held while pressing WASD). The wait is
-// sent when Space is released, and only if it wasn't used for pushing. Shift+WASD turns on the spot.
+// Space is both "wait" (a tap) and "push or pull instead of step" (held while pressing WASD):
+// toward anything else it pushes that way; away from where you're facing, it pulls the block
+// you're facing (you step back and it comes with you). The wait is sent when Space is released,
+// and only if it wasn't used. Shift+WASD turns on the spot.
+const OPPOSITE: Record<string, string> = { n: "s", s: "n", e: "w", w: "e" };
 let spaceHeld = false;
 let spaceUsed = false;
 
@@ -50,7 +53,8 @@ export function installKeys() {
     if (direction) {
       if (event.shiftKey) send({ type: "facing", direction }); // turn on the spot
       else if (spaceHeld) {
-        act("push", direction);
+        if (direction === OPPOSITE[facing()]) act("pull", facing());
+        else act("push", direction);
         spaceUsed = true;
       } else act("move", direction);
     } else if (key === " ") {

@@ -331,7 +331,7 @@ function HeatLegend() {
 function KeyHints() {
   const hints = [
     ["WASD", "move"],
-    ["Space+WASD", "push"],
+    ["Space+WASD", "push (away from facing: pull)"],
     ["Shift+WASD", "turn"],
     ["E", "pick up"],
     ["R", "put down"],
