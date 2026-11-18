@@ -46,6 +46,7 @@ export type Tick = {
   fell: number[];
   timing: ServerTiming;
   error: string | null; // set when the world hit a problem and paused itself
+  timeline: { start: number; head: number; now: number }; // what replay can reach, and where we are
 };
 
 export type Inspected = Record<string, number | string | number[]> | null;

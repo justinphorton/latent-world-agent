@@ -104,6 +104,56 @@ function TopBar() {
           ⚠ paused: {tick.error}
         </span>
       )}
+      <Timeline />
+    </div>
+  );
+}
+
+// Replay: drag back to any recorded moment (the last few days). Playing from there re-runs what
+// really happened; acting while rewound starts a new future from that point.
+function Timeline() {
+  const timeline = useStore((s) => s.tick?.timeline);
+  const dayLength = useStore((s) => s.init?.dayLength ?? 900);
+  const [dragging, setDragging] = useState<number | null>(null);
+  if (!timeline) return null;
+
+  const { start, head, now } = timeline;
+  const shown = dragging ?? now;
+  const live = now >= head;
+  const when = (t: number) => `day ${Math.floor(t / dayLength) + 1} · tick ${t}`;
+  const seek = (value: number) => {
+    send({ type: "control", cmd: "seek", value });
+    setDragging(null);
+  };
+
+  return (
+    <div className="timeline">
+      <span className="muted">replay</span>
+      <input
+        type="range"
+        min={start}
+        max={Math.max(head, start + 1)}
+        value={shown}
+        onChange={(e) => setDragging(Number(e.target.value))}
+        onPointerUp={(e) => seek(Number((e.target as HTMLInputElement).value))}
+        onKeyUp={(e) => seek(Number((e.target as HTMLInputElement).value))}
+      />
+      <span className="num">{when(shown)}</span>
+      {live ? (
+        <span className="live">● live</span>
+      ) : (
+        <>
+          <span className="muted">{head - now} ticks back</span>
+          <button
+            onClick={() => {
+              seek(head);
+              send({ type: "control", cmd: "play" });
+            }}
+          >
+            back to live
+          </button>
+        </>
+      )}
     </div>
   );
 }

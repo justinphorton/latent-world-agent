@@ -66,11 +66,14 @@ button.on { background: rgba(242, 193, 75, 0.25); border-color: rgba(242, 193, 7
 .sunmark { position: absolute; top: -7px; transform: translateX(-50%); font-size: 14px; }
 
 .muted { color: var(--muted); font-weight: 400; }
+.timeline { flex-basis: 100%; display: flex; align-items: center; gap: 10px; }
+.timeline input[type="range"] { flex: 1; accent-color: #f2c14b; }
+.timeline .live { color: #7fd58a; font-weight: 600; }
 .world-error { color: #ff8a6a; font-weight: 600; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .side { right: 12px; width: 240px; padding: 10px 14px; }
-.body { top: 72px; }
-.inspector { top: 360px; }
+.body { top: 108px; }
+.inspector { top: 396px; }
 .side h3 {
   margin: 4px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
   color: var(--muted); display: flex; align-items: center; gap: 6px;

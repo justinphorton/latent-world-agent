@@ -9,7 +9,8 @@ Server -> browser:
 Browser -> server:
     action   {verb, direction}: the human's next action
     facing   {direction}: where the human is facing, so the hands' target can be highlighted
-    control  {cmd, value}: play / pause / step / speed / reset / driver (human or random)
+    control  {cmd, value}: play / pause / step / speed / reset / driver (human or random) /
+             seek (jump to a recorded tick, for replay)
     inspect  {id}: ask for one entity's full values
     perf     the browser's frame rate and render stats, appended to logs/viewer-perf.jsonl
 
@@ -40,6 +41,55 @@ from world.world import World
 BASE_TICKS_PER_SECOND = 5
 MAX_UPDATES_PER_SECOND = 15  # world pictures sent to the browser, at most
 ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "viewer-errors.log"
+SNAPSHOT_EVERY = 100  # ticks between replay snapshots
+HISTORY_TICKS = 3 * DAY_LENGTH  # how far back replay can go
+
+
+class History:
+    """What happened, so it can be replayed: every action taken, plus a snapshot every
+    SNAPSHOT_EVERY ticks. Worlds are deterministic, so a snapshot plus the actions after it
+    reproduces any moment exactly. Keeps the last HISTORY_TICKS ticks.
+
+    `head` is the newest tick recorded. When the world is rewound (world.tick < head), playing
+    follows the recorded actions until it catches up; acting differently branches: the old
+    future is dropped and recording continues from there.
+    """
+
+    def __init__(self, world: World):
+        self.start = world.tick
+        self.head = world.tick
+        self.actions: dict[int, Action] = {}  # the action taken at each tick
+        self.snapshots = {world.tick: world.snapshot()}
+
+    def record(self, tick: int, action: Action, world: World) -> None:
+        """Remember the action taken at `tick` (the world has just stepped past it)."""
+        self.actions[tick] = action
+        self.head = world.tick
+        if world.tick % SNAPSHOT_EVERY == 0:
+            self.snapshots[world.tick] = world.snapshot()
+        self._forget_old()
+
+    def seek(self, world: World, tick: int) -> None:
+        """Put the world at `tick`: restore the nearest snapshot before it, replay up to it."""
+        tick = max(self.start, min(self.head, tick))
+        base = max(t for t in self.snapshots if t <= tick)
+        world.restore(self.snapshots[base])
+        for t in range(base, tick):
+            world.step(self.actions[t])
+
+    def branch(self, tick: int) -> None:
+        """Forget everything recorded after `tick`: a new future starts here."""
+        self.actions = {t: a for t, a in self.actions.items() if t < tick}
+        self.snapshots = {t: s for t, s in self.snapshots.items() if t <= tick}
+        self.head = tick
+
+    def _forget_old(self) -> None:
+        """Drop what's older than HISTORY_TICKS, always keeping a snapshot to start from."""
+        keep_from = max((t for t in self.snapshots if t <= self.head - HISTORY_TICKS), default=self.start)
+        if keep_from > self.start:
+            self.snapshots = {t: s for t, s in self.snapshots.items() if t >= keep_from}
+            self.actions = {t: a for t, a in self.actions.items() if t >= keep_from}
+            self.start = keep_from
 
 
 class Session:
@@ -60,16 +110,32 @@ class Session:
         self.step_ms = 0.0  # smoothed time to run one world tick
         self.build_ms = 0.0  # smoothed time to build one tick message
         self.error: str | None = None  # the last thing that went wrong, shown in the browser
+        self.history = History(self.world)
 
     # --- the clock ---
 
     def tick(self) -> None:
         """Advance the world one tick. If anything goes wrong (a failed check, a bug), the world
-        pauses and the error is logged and shown, instead of the server crashing."""
-        agent = self.human if self.driver == "human" else self.random
+        pauses and the error is logged and shown, instead of the server crashing.
+
+        While rewound, the world replays what was recorded, unless the human presses something,
+        which branches off a new future from here.
+        """
+        tick = self.world.tick
+        rewound = tick < self.history.head
+        replaying = rewound and not (self.driver == "human" and self.human.pending is not None)
+        if replaying:
+            action = self.history.actions[tick]  # what really happened here
+        else:
+            if rewound:
+                self.history.branch(tick)
+            agent = self.human if self.driver == "human" else self.random
+            action = agent.act(self.last_feedback)
         started = time.perf_counter()
         try:
-            result = self.world.step(agent.act(self.last_feedback))
+            result = self.world.step(action)
+            if not replaying:
+                self.history.record(tick, action, self.world)
         except Exception as error:
             self.running = False
             self.error = f"{type(error).__name__}: {error}"
@@ -171,6 +237,7 @@ class Session:
             "fell": [e.entity_id for e in self.last_events if hasattr(e, "end")],
             "timing": {"stepMs": round(self.step_ms, 2), "buildMs": round(self.build_ms, 2)},
             "error": self.error,
+            "timeline": {"start": self.history.start, "head": self.history.head, "now": world.tick},
         }
 
     def inspect_message(self, entity_id: int) -> dict:
@@ -219,8 +286,17 @@ class Session:
             self.speed = float(value)
         elif cmd == "driver" and value in ("human", "random"):
             self.driver = value
+        elif cmd == "seek" and value is not None:
+            # Jump to any recorded moment and pause there. Playing on replays what happened.
+            self.running = False
+            try:
+                self.history.seek(self.world, int(value))
+            except Exception as error:
+                self.error = f"{type(error).__name__}: {error}"
+            self.last_feedback, self.last_events = None, []
         elif cmd == "reset":
             self.world.reset(int(value) if value is not None else self.world.seed)
+            self.history = History(self.world)
             self.last_feedback, self.last_events, self.error = None, [], None
             await self.broadcast(self.init_message())
         await self.broadcast(self.tick_message())
