@@ -11,7 +11,8 @@ Browser -> server:
     facing   {direction}: where the human is facing, so the hands' target can be highlighted
     control  {cmd, value}: play / pause / step / speed / reset / driver (human or random) /
              seek (jump exactly to a recorded tick) / peek (jump to the nearest snapshot, while scrubbing) /
-             switch (flip between the original and the try) / keep_try / discard_try
+             switch (flip between the original and the try) / keep_try / discard_try /
+             agent_view (true: also send which things the agent perceives, so the rest can be dimmed)
     inspect  {id}: ask for one entity's full values
     perf     the browser's frame rate and render stats, appended to logs/viewer-perf.jsonl
 
@@ -36,6 +37,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agents.agents import HumanAgent, RandomAgent
 from world.body import DIRECTIONS, Action, Feedback
 from world.laws import DAY_LENGTH, DAYLIGHT
+from world.senses import SenseSettings, observe
 from world.state import FIELDS, LAYERS
 from world.world import World
 
@@ -132,6 +134,8 @@ class Session:
         self.original: History | None = None
         self.attempt: History | None = None
         self.try_from: int | None = None  # the tick the try split off at
+        self.agent_view = False  # show only what the agent perceives (everything else dimmed)
+        self.senses = SenseSettings()
 
     # --- the clock ---
 
@@ -292,7 +296,15 @@ class Session:
                 "tryFrom": self.try_from,  # set while a try exists
                 "onTry": self.attempt is not None and self.history is self.attempt,
             },
+            "agentView": self._agent_view_ids() if self.agent_view else None,
         }
+
+    def _agent_view_ids(self) -> list[int]:
+        """The ids of everything the agent perceives right now (its senses, as configured)."""
+        world = self.world
+        seen = observe(world.state, world.body.entity_id, world.tick, self.senses).seen
+        state = world.state
+        return [int(state.layers[t.layer]["id"][t.pos]) for t in seen]
 
     def inspect_message(self, entity_id: int) -> dict:
         entity = self.world.state.entity_by_id(entity_id)
@@ -340,6 +352,8 @@ class Session:
             self.speed = float(value)
         elif cmd == "driver" and value in ("human", "random"):
             self.driver = value
+        elif cmd == "agent_view":
+            self.agent_view = bool(value)
         elif cmd == "switch" and self.attempt is not None and self.original is not None:
             self._show(self.original if self.history is self.attempt else self.attempt)
         elif cmd == "keep_try":

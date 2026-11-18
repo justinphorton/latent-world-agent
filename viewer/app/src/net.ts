@@ -48,6 +48,7 @@ export type Tick = {
   error: string | null; // set when the world hit a problem and paused itself
   // What replay can reach and where we are; tryFrom is set while trying something different.
   timeline: { start: number; head: number; now: number; tryFrom: number | null; onTry: boolean };
+  agentView: number[] | null; // with agent view on: the ids of everything the agent perceives
 };
 
 export type Inspected = Record<string, number | string | number[]> | null;
@@ -59,6 +60,7 @@ export const store = {
   inspected: null as Inspected,
   selectedId: null as number | null,
   heatView: false,
+  agentView: false, // dim everything the agent can't perceive
   heatRange: [0, 1] as [number, number], // warmth range the heat view's colours stretch across
   perf: null as Perf | null,
   version: 0,
@@ -84,6 +86,13 @@ export const messageStats = { parseMs: 0, kb: 0 };
 
 const listeners = new Set<() => void>();
 
+// Agent view: the server only sends what the agent perceives while this is on.
+export function toggleAgentView() {
+  store.agentView = !store.agentView;
+  send({ type: "control", cmd: "agent_view", value: store.agentView });
+  emit();
+}
+
 export function emit() {
   store.version++;
   listeners.forEach((listener) => listener());
@@ -95,6 +104,7 @@ export function connect() {
   socket = new WebSocket(`ws://${location.hostname}:8000/ws`);
   socket.onopen = () => {
     store.connected = true;
+    send({ type: "control", cmd: "agent_view", value: store.agentView }); // keep the server in sync
     emit();
   };
   socket.onmessage = (event) => {

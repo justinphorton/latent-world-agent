@@ -1,7 +1,7 @@
 // Keyboard -> actions. Each WASD key is one of the four world directions, chosen relative to the
 // camera: W is whichever grid direction points most nearly "up the screen". One press, one step.
 
-import { emit, send, store } from "./net";
+import { emit, send, store, toggleAgentView } from "./net";
 
 // Updated every frame by the scene: the camera's forward direction on the ground (three.js x, z).
 export const cameraGround = { x: -1, z: -1 };
@@ -66,7 +66,8 @@ export function installKeys() {
     else if (key === "h") {
       store.heatView = !store.heatView;
       emit();
-    } else return;
+    } else if (key === "g") toggleAgentView();
+    else return;
     event.preventDefault();
   };
   const onUp = (event: KeyboardEvent) => {

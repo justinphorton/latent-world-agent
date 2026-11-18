@@ -99,6 +99,7 @@ type Slot = { entry: Shown; mesh: THREE.InstancedMesh; index: number; cover: boo
 
 const MOSS_DRY = new THREE.Color("#9a8a4a");
 const RED_HOT = new THREE.Color("#ffb070");
+const UNSEEN = new THREE.Color("#23253a"); // agent view: what the agent can't perceive fades to this
 
 // Whether anything is animating this frame; shadows only need redrawing when something moves.
 const animation = { entities: true, body: true };
@@ -164,7 +165,7 @@ function Entities({ init }: { init: Init }) {
   //  - when a new tick arrives (a few times a second), every visible entity's slot and colour is
   //    rewritten, and anything not yet at its new position is put on the `moving` list;
   //  - every frame, only the entities on the moving list are animated.
-  const built = useRef<{ tick: unknown; heat: boolean }>({ tick: null, heat: false });
+  const built = useRef<{ tick: unknown; heat: boolean; agent: boolean }>({ tick: null, heat: false, agent: false });
   const moving = useRef(new Map<number, Slot>());
 
   const placeMatrix = (slot: Slot) => {
@@ -191,9 +192,11 @@ function Entities({ init }: { init: Init }) {
     if (!tick) return;
     const touched = new Set<THREE.InstancedMesh>();
 
-    if (built.current.tick !== tick || built.current.heat !== store.heatView) {
-      built.current = { tick, heat: store.heatView };
+    if (built.current.tick !== tick || built.current.heat !== store.heatView || built.current.agent !== store.agentView) {
+      built.current = { tick, heat: store.heatView, agent: store.agentView };
       const { hidden, isBlock } = buriedBlocks(init, tick.entities);
+      // Agent view: things the agent can't perceive are drawn as dim grey shapes.
+      const perceived = store.agentView && tick.agentView ? new Set(tick.agentView) : null;
       const counts = looks.map(() => 0);
       const seen = new Set<number>();
       moving.current.clear();
@@ -239,6 +242,7 @@ function Entities({ init }: { init: Init }) {
           if (kind.layer === "cover") temp.color.lerp(MOSS_DRY, Math.max(0, 0.3 - warmth));
           if (warmth > 0.75) temp.color.lerp(RED_HOT, Math.min(1, (warmth - 0.75) * 3));
         }
+        if (perceived && !perceived.has(id)) temp.color.lerp(UNSEEN, 0.85);
         mesh.setColorAt(slot.index, temp.color);
         ids.current[lookIndex][slot.index] = id;
       }

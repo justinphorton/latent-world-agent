@@ -5,7 +5,7 @@ import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import { Scene, turbo } from "./Scene";
 import { Sky } from "./Sky";
-import { connect, emit, send, store, useStore } from "./net";
+import { connect, emit, send, store, toggleAgentView, useStore } from "./net";
 import { installKeys } from "./keys";
 
 export function App() {
@@ -49,6 +49,7 @@ function TopBar() {
   const tick = useStore((s) => s.tick);
   const init = useStore((s) => s.init);
   const heat = useStore((s) => s.heatView);
+  const agentView = useStore((s) => s.agentView);
   const [seed, setSeed] = useState("0");
   if (!tick || !init) return null;
 
@@ -83,6 +84,9 @@ function TopBar() {
         }}
       >
         heat view
+      </button>
+      <button className={agentView ? "on" : ""} onClick={toggleAgentView} title="dim everything the agent can't perceive (G)">
+        agent view
       </button>
       <div className="group seed">
         <span>seed</span>
@@ -336,6 +340,7 @@ function KeyHints() {
     ["V", "pillar up"],
     ["Space tap", "wait"],
     ["H", "heat view"],
+    ["G", "agent view"],
     ["P", "pause"],
     ["N", "step"],
     ["click", "inspect"],
