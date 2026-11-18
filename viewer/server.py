@@ -44,6 +44,7 @@ from world.world import World
 BASE_TICKS_PER_SECOND = 5
 MAX_UPDATES_PER_SECOND = 15  # world pictures sent to the browser, at most
 ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "viewer-errors.log"
+STARTER = Path(__file__).resolve().parent.parent / "worlds" / "starter.npz"  # the frozen starter island
 SNAPSHOT_EVERY = 100  # ticks between replay snapshots
 HISTORY_TICKS = 3 * DAY_LENGTH  # how far back replay can go
 
@@ -113,7 +114,8 @@ class Session:
     """The one running world, who drives it, and who is watching."""
 
     def __init__(self):
-        self.world = World(seed=0)
+        # Start on the frozen starter island if there is one; "new island" generates fresh ones.
+        self.world = World.load(STARTER) if STARTER.exists() else World(seed=0)
         self.human = HumanAgent()
         self.random = RandomAgent(seed=0)
         self.driver = "human"

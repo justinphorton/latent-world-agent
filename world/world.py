@@ -20,7 +20,7 @@ from world import laws
 from world.body import Action, Body, Feedback
 from world.laws import LAWS, RUNGS
 from world.state import LAYERS, WorldState
-from world.worldgen import build_test_island
+from world.worldgen import build_island
 
 WORLD_SAVE_VERSION = 1  # bump when the world save format changes
 
@@ -73,7 +73,7 @@ class World:
     def reset(self, seed: int) -> None:
         """Build a fresh island from a seed and start the clock at sunrise."""
         self.seed = seed
-        self.state, body_id = build_test_island(seed)
+        self.state, body_id = build_island(seed)
         self.body = Body(self.state, body_id)
         self.rng = np.random.default_rng([seed, 1])  # the world's own dice (growth), apart from worldgen's
         self.tick = 0
