@@ -10,7 +10,8 @@ Browser -> server:
     action   {verb, direction}: the human's next action
     facing   {direction}: where the human is facing, so the hands' target can be highlighted
     control  {cmd, value}: play / pause / step / speed / reset / driver (human or random) /
-             seek (jump exactly to a recorded tick) / peek (jump to the nearest snapshot, while scrubbing)
+             seek (jump exactly to a recorded tick) / peek (jump to the nearest snapshot, while scrubbing) /
+             switch (flip between the original and the try) / keep_try / discard_try
     inspect  {id}: ask for one entity's full values
     perf     the browser's frame rate and render stats, appended to logs/viewer-perf.jsonl
 
@@ -83,6 +84,14 @@ class History:
         tick = max(self.start, min(self.head, tick))
         world.restore(self.snapshots[max(t for t in self.snapshots if t <= tick)])
 
+    def fork(self) -> History:
+        """An independent copy to try something different in. Snapshots are never changed once
+        taken, so the copy can share them."""
+        twin = History.__new__(History)
+        twin.start, twin.head = self.start, self.head
+        twin.actions, twin.snapshots = dict(self.actions), dict(self.snapshots)
+        return twin
+
     def branch(self, tick: int) -> None:
         """Forget everything recorded after `tick`: a new future starts here."""
         self.actions = {t: a for t, a in self.actions.items() if t < tick}
@@ -116,7 +125,13 @@ class Session:
         self.step_ms = 0.0  # smoothed time to run one world tick
         self.build_ms = 0.0  # smoothed time to build one tick message
         self.error: str | None = None  # the last thing that went wrong, shown in the browser
-        self.history = History(self.world)
+        self.history = History(self.world)  # the timeline being played right now
+        # Trying something different: acting while rewound keeps what really happened, so you
+        # can flip between the original and the try, then keep or discard the try. There is
+        # always the original plus at most one try; these are only set while a try exists.
+        self.original: History | None = None
+        self.attempt: History | None = None
+        self.try_from: int | None = None  # the tick the try split off at
 
     # --- the clock ---
 
@@ -134,7 +149,7 @@ class Session:
             action = self.history.actions[tick]  # what really happened here
         else:
             if rewound:
-                self.history.branch(tick)
+                self._start_try(tick)
             agent = self.human if self.driver == "human" else self.random
             action = agent.act(self.last_feedback)
         started = time.perf_counter()
@@ -156,6 +171,33 @@ class Session:
         action = result.feedback.action
         if action.verb in ("move", "push") and action.direction:
             self.facing = action.direction  # you face the way you last walked or pushed
+
+    def _start_try(self, tick: int) -> None:
+        """Acting differently while rewound. Inside the try, this just changes the try's future
+        from here. In the original, it starts a fresh try (replacing any earlier one) and leaves
+        the original untouched."""
+        if self.attempt is not None and self.history is self.attempt:
+            self.attempt.branch(tick)
+            return
+        self.original = self.original or self.history
+        self.attempt = self.original.fork()
+        self.attempt.branch(tick)
+        self.history = self.attempt
+        self.try_from = tick
+
+    def _show(self, timeline: History) -> None:
+        """Switch to another timeline at the same moment (or as close as it reaches), paused."""
+        self.history = timeline
+        timeline.seek(self.world, self.world.tick)
+        self.running = False
+        self.last_feedback, self.last_events = None, []
+
+    def _end_try(self, keep: bool) -> None:
+        """Keep the try (it becomes the original) or discard it (back to the original)."""
+        if self.attempt is None or self.original is None:
+            return
+        self._show(self.attempt if keep else self.original)
+        self.original = self.attempt = self.try_from = None
 
     async def run(self) -> None:
         """Tick on a steady clock, but answer a keypress right away instead of waiting for the next
@@ -243,7 +285,13 @@ class Session:
             "fell": [e.entity_id for e in self.last_events if hasattr(e, "end")],
             "timing": {"stepMs": round(self.step_ms, 2), "buildMs": round(self.build_ms, 2)},
             "error": self.error,
-            "timeline": {"start": self.history.start, "head": self.history.head, "now": world.tick},
+            "timeline": {
+                "start": self.history.start,
+                "head": self.history.head,
+                "now": world.tick,
+                "tryFrom": self.try_from,  # set while a try exists
+                "onTry": self.attempt is not None and self.history is self.attempt,
+            },
         }
 
     def inspect_message(self, entity_id: int) -> dict:
@@ -292,6 +340,12 @@ class Session:
             self.speed = float(value)
         elif cmd == "driver" and value in ("human", "random"):
             self.driver = value
+        elif cmd == "switch" and self.attempt is not None and self.original is not None:
+            self._show(self.original if self.history is self.attempt else self.attempt)
+        elif cmd == "keep_try":
+            self._end_try(keep=True)
+        elif cmd == "discard_try":
+            self._end_try(keep=False)
         elif cmd == "peek" and value is not None:
             self.running = False
             self.history.peek(self.world, int(value))
@@ -307,6 +361,7 @@ class Session:
         elif cmd == "reset":
             self.world.reset(int(value) if value is not None else self.world.seed)
             self.history = History(self.world)
+            self.original = self.attempt = self.try_from = None
             self.last_feedback, self.last_events, self.error = None, [], None
             await self.broadcast(self.init_message())
         await self.broadcast(self.tick_message())

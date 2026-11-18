@@ -118,12 +118,13 @@ function Timeline() {
   const lastPeek = useRef(0);
   if (!timeline) return null;
 
-  const { start, head, now } = timeline;
+  const { start, head, now, tryFrom, onTry } = timeline;
   const shown = dragging ?? now;
   const live = now >= head;
   const when = (t: number) => `day ${Math.floor(t / dayLength) + 1} · tick ${t}`;
+  const control = (cmd: string, value?: number) => send({ type: "control", cmd, value });
   const seek = (value: number) => {
-    send({ type: "control", cmd: "seek", value });
+    control("seek", value);
     setDragging(null);
   };
 
@@ -157,12 +158,20 @@ function Timeline() {
           <button
             onClick={() => {
               seek(head);
-              send({ type: "control", cmd: "play" });
+              control("play");
             }}
           >
             back to live
           </button>
         </>
+      )}
+      {tryFrom !== null && (
+        <span className="try">
+          <span className={onTry ? "on" : ""}>{onTry ? `trying something different (from tick ${tryFrom})` : "original"}</span>
+          <button onClick={() => control("switch")}>{onTry ? "show original" : "show try"}</button>
+          <button onClick={() => control("keep_try")}>keep try</button>
+          <button onClick={() => control("discard_try")}>discard try</button>
+        </span>
       )}
     </div>
   );
