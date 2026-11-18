@@ -377,6 +377,7 @@ def test_a_block_falling_on_your_head_is_carried_and_can_pin_you():
     assert do(body, "move", "w").moved
 
 
+@pytest.mark.slow
 def test_random_play_on_the_island_never_breaks_anything():
     """Thousands of random actions on the real island, with every invariant checked every tick."""
     world = World(seed=1, rung=3, check_every=1)

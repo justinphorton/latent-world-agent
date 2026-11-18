@@ -7,6 +7,7 @@ outside what a snapshot captures, these tests would catch it.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from agents.agents import RandomAgent
 from world.world import World
@@ -38,6 +39,7 @@ def assert_same(a: World, b: World) -> None:
     assert a.state.recipes == b.state.recipes
 
 
+@pytest.mark.slow
 def test_same_seed_and_actions_give_the_same_world():
     actions = random_actions(BEFORE + AFTER)
     a, b = World(seed=3, check_every=0), World(seed=3, check_every=0)
@@ -46,6 +48,7 @@ def test_same_seed_and_actions_give_the_same_world():
     assert_same(a, b)
 
 
+@pytest.mark.slow
 def test_restoring_a_snapshot_and_replaying_gives_exactly_what_happened():
     actions = random_actions(BEFORE + AFTER)
     world = World(seed=3, check_every=0)
@@ -74,6 +77,7 @@ def test_a_snapshot_is_unaffected_by_the_world_moving_on():
     assert snapshot.state.total_energy() == energy and snapshot.tick == 200
 
 
+@pytest.mark.slow
 def test_saving_and_loading_continues_exactly_where_it_left_off(tmp_path):
     actions = random_actions(BEFORE + AFTER)
     world = World(seed=3, check_every=0)

@@ -22,3 +22,5 @@ include = ["world*", "agents*", "viewer*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Quick check without the long runs:  pytest -m "not slow"
+markers = ["slow: runs a world for thousands of ticks (deselect with -m \"not slow\")"]

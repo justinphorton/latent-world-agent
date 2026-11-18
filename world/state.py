@@ -402,15 +402,22 @@ class WorldState:
 
     def welded_to(self, pos: Pos) -> list[Pos]:
         """The spots of every block welded to the block at pos."""
-        pos = _as_pos(pos)
+        x, y, z = _as_pos(pos)
+        e, n, u = self.welds
+        width, depth, height = self.shape
         found = []
-        for axis, step in enumerate(AXES):
-            ahead = _plus(pos, step)
-            behind = _minus(pos, step)
-            if self.in_bounds(ahead) and self.welds[axis][pos]:
-                found.append(ahead)
-            if self.in_bounds(behind) and self.welds[axis][behind]:
-                found.append(behind)
+        if x + 1 < width and e[x, y, z]:
+            found.append((x + 1, y, z))
+        if x > 0 and e[x - 1, y, z]:
+            found.append((x - 1, y, z))
+        if y + 1 < depth and n[x, y, z]:
+            found.append((x, y + 1, z))
+        if y > 0 and n[x, y - 1, z]:
+            found.append((x, y - 1, z))
+        if z + 1 < height and u[x, y, z]:
+            found.append((x, y, z + 1))
+        if z > 0 and u[x, y, z - 1]:
+            found.append((x, y, z - 1))
         return found
 
     def has_welds(self, pos: Pos) -> bool:

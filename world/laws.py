@@ -73,7 +73,7 @@ def is_supported(state: WorldState, layer: str, pos: Pos) -> bool:
     if every side is blocked it has nowhere to go, so it rests on the other's head.
     """
     if layer == "block" and state.has_welds(pos):
-        return _group_supported(state, state.weld_group(pos))
+        return group_supported(state, state.weld_group(pos))
     x, y, z = pos
     if z == 0:
         return True
@@ -92,24 +92,49 @@ def settle(state: WorldState) -> list[Fall]:
     when a block under it falls), so after settle() nothing in the world is floating.
     """
     events: list[Fall] = []
-    _, _, height = state.shape
     while True:
         moved = len(events)
-        for group in _welded_groups(state):
-            if not _group_supported(state, group):
-                events.extend(_drop_group(state, group))
-        for z in range(1, height):
-            for layer in LAYERS:
-                occupied = state.occupied(layer)[:, :, z]
-                for x, y in zip(*np.nonzero(occupied)):
-                    pos = (int(x), int(y), z)
-                    if state.layers[layer]["kind"][pos] != 0 and not is_supported(state, layer, pos):
-                        events.extend(_drop(state, layer, pos))
+        if any(w.any() for w in state.welds):
+            for group in welded_groups(state):
+                if not group_supported(state, group):
+                    events.extend(_drop_group(state, group))
+        for layer, pos in unsupported(state):  # lowest first
+            if state.layers[layer]["kind"][pos] != 0 and not is_supported(state, layer, pos):
+                events.extend(_drop(state, layer, pos))
         if len(events) == moved:
             return events
 
 
-def _welded_groups(state: WorldState) -> list[set[Pos]]:
+def unsupported(state: WorldState) -> list[tuple[str, Pos]]:
+    """Everything (outside welded groups) with nothing it can rest on directly below it, lowest
+    first. Worked out for the whole world at once; almost always empty, so gravity costs little.
+    (The rare creature-on-creature case is decided by is_supported.)"""
+    occupied = {layer: state.occupied(layer) for layer in LAYERS}
+    welded = welded_mask(state)
+    found = []
+    for layer, rules in LAYERS.items():
+        held = np.zeros(state.shape, bool)
+        held[:, :, 0] = True  # the floor of the world
+        for support in rules.supported_by:
+            held[:, :, 1:] |= occupied[support][:, :, :-1]
+        loose = occupied[layer] & ~held
+        if layer == "block":
+            loose &= ~welded  # welded groups are held up as a whole
+        found.extend((layer, (int(x), int(y), int(z))) for x, y, z in zip(*np.nonzero(loose)))
+    return sorted(found, key=lambda item: item[1][2])
+
+
+def welded_mask(state: WorldState) -> np.ndarray:
+    """True for every block that has at least one weld."""
+    mask = np.zeros(state.shape, bool)
+    for axis, step in enumerate(AXES):
+        here, ahead = pair_slices(state.shape, step)
+        mask[here] |= state.welds[axis][here]
+        mask[ahead] |= state.welds[axis][here]
+    return mask
+
+
+def welded_groups(state: WorldState) -> list[set[Pos]]:
     """Every group of welded blocks, lowest first."""
     welded: set[Pos] = set()
     for axis, step in enumerate(AXES):
@@ -124,7 +149,7 @@ def _welded_groups(state: WorldState) -> list[set[Pos]]:
     return sorted(groups, key=lambda g: min(p[2] for p in g))
 
 
-def _group_supported(state: WorldState, group: set[Pos]) -> bool:
+def group_supported(state: WorldState, group: set[Pos]) -> bool:
     """A welded group is held up if any of its blocks rests on the floor, on a block outside the
     group, or on a creature."""
     for x, y, z in group:
@@ -142,7 +167,7 @@ def _drop_group(state: WorldState, group: set[Pos]) -> list[Fall]:
     """Lower an unsupported welded group, one step at a time, as one rigid piece, until it rests.
     Moss in its way is buried, its energy going into the block that lands on it."""
     starts = {pos: int(state.layers["block"]["id"][pos]) for pos in group}
-    while not _group_supported(state, group):
+    while not group_supported(state, group):
         for x, y, z in group:
             moss = state.entity_at("cover", (x, y, z - 1))
             if moss is not None and (x, y, z - 1) not in group:

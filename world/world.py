@@ -19,7 +19,7 @@ import numpy as np
 from world import laws
 from world.body import Action, Body, Feedback
 from world.laws import LAWS, RUNGS
-from world.state import LAYERS, WorldState
+from world.state import WorldState
 from world.worldgen import build_island
 
 WORLD_SAVE_VERSION = 1  # bump when the world save format changes
@@ -112,11 +112,10 @@ class World:
         self.state.check()
         if "gravity" not in self.laws_on:
             return
-        for layer in LAYERS:
-            for pos in zip(*self.state.occupied(layer).nonzero()):
-                pos = tuple(int(p) for p in pos)
-                if not laws.is_supported(self.state, layer, pos):
-                    raise AssertionError(f"{layer} at {pos} is floating")
+        floating = [(layer, pos) for layer, pos in laws.unsupported(self.state) if not laws.is_supported(self.state, layer, pos)]
+        floating += [("block", min(group)) for group in laws.welded_groups(self.state) if not laws.group_supported(self.state, group)]
+        if floating:
+            raise AssertionError(f"{floating[0][0]} at {floating[0][1]} is floating")
 
     # --- snapshots and saving ---
 
