@@ -1,6 +1,6 @@
 // The page: the 3D world, with a thin layer of controls and panels over it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import * as THREE from "three";
 import { Scene, turbo } from "./Scene";
@@ -115,6 +115,7 @@ function Timeline() {
   const timeline = useStore((s) => s.tick?.timeline);
   const dayLength = useStore((s) => s.init?.dayLength ?? 900);
   const [dragging, setDragging] = useState<number | null>(null);
+  const lastPeek = useRef(0);
   if (!timeline) return null;
 
   const { start, head, now } = timeline;
@@ -134,7 +135,16 @@ function Timeline() {
         min={start}
         max={Math.max(head, start + 1)}
         value={shown}
-        onChange={(e) => setDragging(Number(e.target.value))}
+        onChange={(e) => {
+          // While dragging, flip through the nearest snapshots (instant, in steps); the exact
+          // moment loads when the slider is let go.
+          const value = Number(e.target.value);
+          setDragging(value);
+          if (performance.now() - lastPeek.current > 100) {
+            lastPeek.current = performance.now();
+            send({ type: "control", cmd: "peek", value });
+          }
+        }}
         onPointerUp={(e) => seek(Number((e.target as HTMLInputElement).value))}
         onKeyUp={(e) => seek(Number((e.target as HTMLInputElement).value))}
       />

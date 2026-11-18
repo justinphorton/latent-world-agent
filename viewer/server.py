@@ -10,7 +10,7 @@ Browser -> server:
     action   {verb, direction}: the human's next action
     facing   {direction}: where the human is facing, so the hands' target can be highlighted
     control  {cmd, value}: play / pause / step / speed / reset / driver (human or random) /
-             seek (jump to a recorded tick, for replay)
+             seek (jump exactly to a recorded tick) / peek (jump to the nearest snapshot, while scrubbing)
     inspect  {id}: ask for one entity's full values
     perf     the browser's frame rate and render stats, appended to logs/viewer-perf.jsonl
 
@@ -76,6 +76,12 @@ class History:
         world.restore(self.snapshots[base])
         for t in range(base, tick):
             world.step(self.actions[t])
+
+    def peek(self, world: World, tick: int) -> None:
+        """Put the world at the nearest snapshot at or before `tick`, instantly (no replaying).
+        Used while scrubbing: a flipbook of snapshots, then seek() lands exactly on release."""
+        tick = max(self.start, min(self.head, tick))
+        world.restore(self.snapshots[max(t for t in self.snapshots if t <= tick)])
 
     def branch(self, tick: int) -> None:
         """Forget everything recorded after `tick`: a new future starts here."""
@@ -286,6 +292,10 @@ class Session:
             self.speed = float(value)
         elif cmd == "driver" and value in ("human", "random"):
             self.driver = value
+        elif cmd == "peek" and value is not None:
+            self.running = False
+            self.history.peek(self.world, int(value))
+            self.last_feedback, self.last_events = None, []
         elif cmd == "seek" and value is not None:
             # Jump to any recorded moment and pause there. Playing on replays what happened.
             self.running = False

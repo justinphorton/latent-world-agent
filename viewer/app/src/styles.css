@@ -93,7 +93,7 @@ button.on { background: rgba(242, 193, 75, 0.25); border-color: rgba(242, 193, 7
 .close { margin-left: auto; padding: 0 7px; }
 
 .perf {
-  top: 72px; left: 12px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px;
+  bottom: 12px; left: 12px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px;
   font-size: 11px; font-variant-numeric: tabular-nums;
 }
 .perf.slow > span:first-child { color: #f0a08a; }
@@ -108,7 +108,7 @@ button.on { background: rgba(242, 193, 75, 0.25); border-color: rgba(242, 193, 7
 
 .hints {
   bottom: 12px; left: 50%; transform: translateX(-50%); padding: 7px 12px;
-  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 24px);
+  display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: calc(100% - 560px);
   color: var(--muted);
 }
 kbd {
