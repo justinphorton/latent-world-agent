@@ -15,7 +15,8 @@ logs/
 node_modules/
 dist/
 
-# editors / os
+# editors / os / local tool settings
+.claude/
 .vscode/
 .idea/
 .DS_Store
