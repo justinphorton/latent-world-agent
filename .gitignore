@@ -1,0 +1,22 @@
+# design notes, kept local
+context/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# logs written while running
+logs/
+
+# node / viewer
+node_modules/
+dist/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
