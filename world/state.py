@@ -680,7 +680,19 @@ class WorldState:
         return clone
 
     def save(self, path: str | Path) -> None:
-        """Save everything to one .npz file, so this exact world can be loaded again later."""
+        """Save everything to one .npz file, so this exact state can be loaded again later."""
+        arrays, meta = self.pack()
+        np.savez_compressed(path, meta=np.array(json.dumps(meta)), **arrays)
+
+    @classmethod
+    def load(cls, path: str | Path) -> WorldState:
+        """Load a state saved with save()."""
+        with np.load(path, allow_pickle=False) as data:
+            return cls.unpack(data, json.loads(str(data["meta"])))
+
+    def pack(self) -> tuple[dict[str, np.ndarray], dict]:
+        """Everything in the state as (named arrays, plain JSON-able values), ready to be written
+        into a file (save() does that; World.save adds its own values alongside)."""
         meta = {
             "version": SAVE_VERSION,
             "shape": list(self.shape),
@@ -690,23 +702,22 @@ class WorldState:
             "recipes": [None if kind is None else dataclasses.asdict(kind) for kind in self.recipes],
         }
         arrays = {f"{layer}.{field}": array for layer, fields in self.layers.items() for field, array in fields.items()}
-        np.savez_compressed(path, meta=np.array(json.dumps(meta)), **arrays)
+        return arrays, meta
 
     @classmethod
-    def load(cls, path: str | Path) -> WorldState:
-        """Load a world saved with save(). The id index is rebuilt from the arrays, then checked."""
-        with np.load(path, allow_pickle=False) as data:
-            meta = json.loads(str(data["meta"]))
-            if meta["version"] != SAVE_VERSION:
-                raise ValueError(f"save is version {meta['version']}, this code reads version {SAVE_VERSION}")
-            recipes = tuple(None if d is None else _kind_from_dict(d) for d in meta["recipes"])
-            state = cls(tuple(meta["shape"]), recipes)
-            for layer, fields in state.layers.items():
-                for field, dtype in FIELDS.items():
-                    array = data[f"{layer}.{field}"]
-                    if array.shape != state.shape:
-                        raise ValueError(f"saved {layer}.{field} has the wrong shape")
-                    fields[field] = array.astype(dtype)
+    def unpack(cls, arrays, meta: dict) -> WorldState:
+        """Rebuild a state from what pack() produced. The id index is rebuilt from the arrays,
+        then the whole state is checked."""
+        if meta["version"] != SAVE_VERSION:
+            raise ValueError(f"save is version {meta['version']}, this code reads version {SAVE_VERSION}")
+        recipes = tuple(None if d is None else _kind_from_dict(d) for d in meta["recipes"])
+        state = cls(tuple(meta["shape"]), recipes)
+        for layer, fields in state.layers.items():
+            for field, dtype in FIELDS.items():
+                array = arrays[f"{layer}.{field}"]
+                if array.shape != state.shape:
+                    raise ValueError(f"saved {layer}.{field} has the wrong shape")
+                fields[field] = np.array(array, dtype=dtype)
         for layer, fields in state.layers.items():
             for pos in zip(*np.nonzero(fields["kind"])):
                 pos = _as_pos(pos)

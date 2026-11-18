@@ -8,8 +8,9 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# logs written while running
+# logs and saved worlds written while running
 logs/
+saves/
 
 # node / viewer
 node_modules/

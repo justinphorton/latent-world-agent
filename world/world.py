@@ -8,8 +8,11 @@ This is the only place that knows the order things happen in. Each tick:
 
 from __future__ import annotations
 
+import copy
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -19,6 +22,8 @@ from world.laws import LAWS, RUNGS
 from world.state import LAYERS, WorldState
 from world.worldgen import build_test_island
 
+WORLD_SAVE_VERSION = 1  # bump when the world save format changes
+
 
 @dataclass
 class StepResult:
@@ -27,6 +32,22 @@ class StepResult:
     feedback: Feedback
     events: list = field(default_factory=list)  # Falls, for the viewer to animate
     popped: list[int] = field(default_factory=list)  # ids of everything that popped
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    """Everything needed to put a world back exactly as it was at one moment.
+
+    The body needs nothing of its own: it has no hidden state, so the state holds all of it.
+    Viewer settings (speed, facing, who drives) are not part of the world and aren't kept.
+    """
+
+    state: WorldState  # a private copy: never handed out or changed
+    tick: int
+    dice: dict  # the exact position of the world's random number generator
+    seed: int
+    laws_on: frozenset[str]
+    body_id: int
 
 
 class World:
@@ -95,6 +116,63 @@ class World:
                 if not laws.is_supported(self.state, layer, pos):
                     raise AssertionError(f"{layer} at {pos} is floating")
 
-    def snapshot(self) -> WorldState:
-        """An independent copy of the full state (for god view, quizzes, forking)."""
-        return self.state.copy()
+    # --- snapshots and saving ---
+
+    def snapshot(self) -> Snapshot:
+        """Capture this exact moment in memory (fast). restore() puts it back; replaying the same
+        actions from there gives exactly the same world, tick for tick."""
+        return Snapshot(
+            state=self.state.copy(),
+            tick=self.tick,
+            dice=copy.deepcopy(self.rng.bit_generator.state),
+            seed=self.seed,
+            laws_on=self.laws_on,
+            body_id=self.body.entity_id,
+        )
+
+    def restore(self, snapshot: Snapshot) -> None:
+        """Go back to a snapshot. The snapshot itself stays untouched, so it can be reused."""
+        self.state = snapshot.state.copy()
+        self.body = Body(self.state, snapshot.body_id)
+        self.rng = np.random.default_rng()
+        self.rng.bit_generator.state = copy.deepcopy(snapshot.dice)
+        self.tick = snapshot.tick
+        self.seed = snapshot.seed
+        self.laws_on = snapshot.laws_on
+
+    def save(self, path: str | Path) -> None:
+        """Save the whole world (state, time, dice, settings) to one .npz file."""
+        arrays, state_meta = self.state.pack()
+        world_meta = {
+            "version": WORLD_SAVE_VERSION,
+            "tick": self.tick,
+            "dice": self.rng.bit_generator.state,
+            "seed": self.seed,
+            "laws_on": sorted(self.laws_on),
+            "body_id": self.body.entity_id,
+        }
+        np.savez_compressed(
+            path, meta=np.array(json.dumps(state_meta)), world=np.array(json.dumps(world_meta)), **arrays
+        )
+
+    @classmethod
+    def load(cls, path: str | Path, check_every: int = 1) -> World:
+        """Load a world saved with save(), ready to keep running exactly where it left off."""
+        with np.load(path, allow_pickle=False) as data:
+            state = WorldState.unpack(data, json.loads(str(data["meta"])))
+            meta = json.loads(str(data["world"]))
+        if meta["version"] != WORLD_SAVE_VERSION:
+            raise ValueError(f"world save is version {meta['version']}, this code reads {WORLD_SAVE_VERSION}")
+        world = cls.__new__(cls)
+        world.check_every = check_every
+        world.restore(
+            Snapshot(
+                state=state,
+                tick=meta["tick"],
+                dice=meta["dice"],
+                seed=meta["seed"],
+                laws_on=frozenset(meta["laws_on"]),
+                body_id=meta["body_id"],
+            )
+        )
+        return world
