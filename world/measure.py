@@ -22,7 +22,12 @@ Two leaks are counted rather than hidden:
   - shade: the body shades the top of whatever it stands on, so a daytime step can change glow
     under the old and new spot. Effects are split into day and night per verb.
 
+A separate health check runs the world untouched for many days and prints one line per day
+(moss alive, born, burned, starved, pops, welds, the biggest welded group, energy), to see
+whether the world stays balanced over the long run.
+
 Run it:  python -m world.measure [worlds/starter.npz] [--days 3] [--rung 4]
+         python -m world.measure [worlds/starter.npz] --health 20
 """
 
 from __future__ import annotations
@@ -247,6 +252,72 @@ def measure(make_world, days: float = 3, every: int = 10, horizon: int = 10, age
     )
 
 
+# ---------------------------------------------------------------------------
+# Health: does the world stay balanced over many days with nobody playing?
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DayLine:
+    """One day of a long, untouched run."""
+
+    day: int
+    moss: int  # moss alive at the end of the day
+    born: int  # moss born during the day
+    burned: int  # moss that died by popping (fire)
+    starved: int  # moss that died any other way (cold, buried)
+    pops: int  # everything that popped
+    welds: int  # welds in the world at the end of the day
+    biggest_group: int  # blocks in the largest welded group
+    body_energy: float
+    total_energy: float
+
+
+def health(make_world, days: int = 20) -> list[DayLine]:
+    """Run the world untouched (the body only waits) and record one line per day."""
+    from world.laws import welded_groups
+
+    world = make_world()
+    state = world.state
+    lines = []
+    for day in range(1, days + 1):
+        born = burned = starved = pops = 0
+        for _ in range(state.tempo.day_length):
+            before = set(np.unique(state.layers["cover"]["id"])) - {0}
+            result = world.step(WAIT)
+            after = set(np.unique(state.layers["cover"]["id"])) - {0}
+            popped = set(result.popped)
+            died = before - after
+            pops += len(popped)
+            born += len(after - before)
+            burned += len(died & popped)
+            starved += len(died - popped)
+        groups = welded_groups(state)
+        lines.append(DayLine(
+            day=day,
+            moss=int(state.occupied("cover").sum()),
+            born=born, burned=burned, starved=starved, pops=pops,
+            welds=int(sum(w.sum() for w in state.welds)),
+            biggest_group=max((len(g) for g in groups), default=0),
+            body_energy=state.entity_by_id(world.body.entity_id).energy,
+            total_energy=state.total_energy(),
+        ))
+    return lines
+
+
+def health_report(lines: list[DayLine]) -> str:
+    out = [f"{'day':>4}{'moss':>6}{'born':>6}{'burned':>8}{'starved':>9}{'pops':>6}{'welds':>7}{'group':>7}{'body':>7}{'energy':>9}"]
+    for l in lines:
+        out.append(
+            f"{l.day:>4}{l.moss:>6}{l.born:>6}{l.burned:>8}{l.starved:>9}{l.pops:>6}{l.welds:>7}"
+            f"{l.biggest_group:>7}{l.body_energy:>7.2f}{l.total_energy:>9.0f}"
+        )
+    fire_days = sum(l.burned > 0 for l in lines)
+    out.append(f"\nfires on {fire_days} of {len(lines)} days; moss ranged {min(l.moss for l in lines)} to "
+               f"{max(l.moss for l in lines)}; welds at the end {lines[-1].welds}")
+    return "\n".join(out)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure how eventful a world is.")
     parser.add_argument("world", nargs="?", default="worlds/starter.npz", help="a saved world (.npz) or a seed number")
@@ -254,6 +325,8 @@ def main() -> None:
     parser.add_argument("--rung", type=int, default=None, help="run with this rung's laws instead of the saved ones")
     parser.add_argument("--every", type=int, default=10, help="ticks between branch pairs")
     parser.add_argument("--horizon", type=int, default=10, help="ticks each branch runs")
+    parser.add_argument("--health", type=int, default=0, metavar="DAYS",
+                        help="instead of the card: run this many untouched days and print one line per day")
     parser.add_argument("--agent-seed", type=int, default=0, help="seed for the random agent")
     parser.add_argument("--json", type=Path, default=None, help="also save the card here")
     args = parser.parse_args()
@@ -266,6 +339,9 @@ def main() -> None:
             world.laws_on = RUNGS[args.rung]
         return world
 
+    if args.health:
+        print(health_report(health(make_world, args.health)))
+        return
     card = measure(make_world, days=args.days, every=args.every, horizon=args.horizon,
                    agent_seed=args.agent_seed, source=args.world)
     print(card.report())
