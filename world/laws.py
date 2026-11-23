@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from world.state import AXES, CONTACTS, ENERGY_FIELDS, LAYERS, Entity, Pos, WorldState, pair_slices
+from world.state import AXES, CONTACTS, ENERGY_FIELDS, LAYERS, Entity, Pos, Tempo, WorldState, pair_slices
 
 LAWS = ("gravity", "sun", "flow", "pop", "life", "weld", "radiation")  # the order they run in
 RUNGS: dict[int, frozenset[str]] = {
@@ -35,10 +35,7 @@ RUNGS: dict[int, frozenset[str]] = {
     4: frozenset({"gravity", "sun", "flow", "radiation", "life", "pop", "weld"}),
 }
 
-DAY_LENGTH = 900  # ticks per full day and night
-DAYLIGHT = 2 / 3  # fraction of each day the sun is up
-SUN_POWER = 0.025  # energy per tick reaching the top of a column at noon
-RADIATION = 0.02  # energy lost per tick per exposed face, times warmth
+# Day length, sun power and radiation live in each world's Tempo (state.tempo), not here.
 MAX_FLOW_STIFFNESS = 0.4  # flow is split into substeps if one tick would move energy too abruptly
 GROUND_PULL = 0.01  # added to every spot's weight when living things pick where to spread
 SOFT_GAP = 0.1  # a soft block only hardens again once this much cooler than its softening point
@@ -233,23 +230,24 @@ def absorb(state: WorldState, layer: str, pos: Pos, into: Entity) -> None:
 # ---------------------------------------------------------------------------
 
 
-def sun_level(tick: int) -> float:
+def sun_level(tick: int, tempo: Tempo = Tempo()) -> float:
     """How strong the sun is at this tick: rising from 0 at sunrise to 1 at noon and back to 0
     at sunset, then 0 all night.
 
-    Tick 0 is sunrise. The first DAYLIGHT (2/3) of each day is light, the rest is night.
+    Tick 0 is sunrise. The first tempo.daylight (2/3) of each day is light, the rest is night.
     """
-    phase = (tick % DAY_LENGTH) / DAY_LENGTH
-    return math.sin(math.pi * phase / DAYLIGHT) if phase < DAYLIGHT else 0.0
+    phase = (tick % tempo.day_length) / tempo.day_length
+    return math.sin(math.pi * phase / tempo.daylight) if phase < tempo.daylight else 0.0
 
 
 def shine(state: WorldState, tick: int) -> None:
     """The sun warms the topmost thing of every column.
 
     Only the top gets sunlight: anything underneath is in the shade. When a creature and a cover
-    share the top spot (the body standing on moss), the creature catches the light.
+    share the top spot (the body standing on moss), the creature catches the light. What
+    reaches a thing is multiplied by its material's sun_catch.
     """
-    energy_in = SUN_POWER * sun_level(tick)
+    energy_in = state.tempo.sun_power * sun_level(tick, state.tempo)
     if energy_in == 0:
         return
     occupied = {layer: state.occupied(layer) for layer in LAYERS}
@@ -260,10 +258,12 @@ def shine(state: WorldState, tick: int) -> None:
 
     unclaimed = has_top.copy()
     xs, ys = np.indices(has_top.shape)
+    catch = _per_kind(state, "sun_catch")
     for layer in ("creature", "cover", "block"):
         hit = unclaimed & occupied[layer][xs, ys, top_z]
         delta = np.zeros(state.shape)
-        delta[xs[hit], ys[hit], top_z[hit]] = energy_in
+        kinds = state.layers[layer]["kind"][xs[hit], ys[hit], top_z[hit]]
+        delta[xs[hit], ys[hit], top_z[hit]] = energy_in * catch[kinds]
         state.exchange_with_outside(layer, delta, "sun")
         unclaimed &= ~hit
 
@@ -309,7 +309,7 @@ def radiate(state: WorldState) -> None:
             faces = open_above.astype(float)
         occupied = state.occupied(layer)
         energy = state.layers[layer]["energy"]
-        loss = np.where(occupied, RADIATION * _warmth(state, layer) * faces, 0.0)
+        loss = np.where(occupied, state.tempo.radiation * _warmth(state, layer) * faces, 0.0)
         loss = np.minimum(loss, energy)  # can't radiate away more than it has
         state.exchange_with_outside(layer, -loss, "radiation")
 

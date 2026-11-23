@@ -36,7 +36,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from agents.agents import HumanAgent, RandomAgent
 from world.body import DIRECTIONS, Action, Feedback
-from world.laws import DAY_LENGTH, DAYLIGHT
 from world.senses import SenseSettings, observe
 from world.state import FIELDS, LAYERS
 from world.world import World
@@ -46,7 +45,7 @@ MAX_UPDATES_PER_SECOND = 15  # world pictures sent to the browser, at most
 ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "viewer-errors.log"
 STARTER = Path(__file__).resolve().parent.parent / "worlds" / "starter.npz"  # the frozen starter island
 SNAPSHOT_EVERY = 100  # ticks between replay snapshots
-HISTORY_TICKS = 3 * DAY_LENGTH  # how far back replay can go
+HISTORY_TICKS = 2700  # how far back replay can go (3 days at the default tempo)
 
 
 class History:
@@ -241,8 +240,8 @@ class Session:
             "shape": list(self.world.state.shape),
             "kinds": kinds,
             "seed": self.world.seed,
-            "dayLength": DAY_LENGTH,
-            "daylight": DAYLIGHT,
+            "dayLength": self.world.state.tempo.day_length,
+            "daylight": self.world.state.tempo.daylight,
             # how precisely the agent perceives tone and glow, so agent view can show it faithfully
             "senses": {"toneLevels": self.senses.tone_levels, "glowLevels": self.senses.glow_levels},
             "directions": list(DIRECTIONS),

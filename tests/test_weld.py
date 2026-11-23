@@ -254,8 +254,9 @@ def test_welding_only_happens_with_the_weld_law_on():
 
 
 def test_sunlight_alone_never_softens_stone():
-    world = World(seed=0, rung=4, check_every=0)
-    for _ in range(2 * laws.DAY_LENGTH):
+    # pops off: a crystal popping against stone can soften it, and that's allowed (it's heat, not sunlight)
+    world = World(seed=0, laws=laws.RUNGS[4] - {"pop"}, check_every=0)
+    for _ in range(2 * world.state.tempo.day_length):
         world.step()
     assert not world.state.layers["block"]["soft"].any()
     assert not any(w.any() for w in world.state.welds)

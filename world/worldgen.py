@@ -23,6 +23,7 @@ CENTER = ((SIZE[0] - 1) / 2, (SIZE[1] - 1) / 2)
 # The ingredients every island gets.
 CRYSTAL_GROUPS = 10  # small standing crystal groups scattered through the meadows
 LOOSE_BLOCKS = ("soil", "stone", "sponge", "crystal")  # starter toys near the body
+SCATTERED_BLOCKS = 16  # more loose blocks, of random materials, lying all over the island
 MOSS_PATCHES = 3  # starting moss, on different levels where possible
 
 
@@ -38,7 +39,7 @@ def build_island(seed: int = 0) -> tuple[WorldState, int]:
       5. small standing crystal groups through the meadows: moss can never grow over a standing
          crystal, so they keep popping on hot afternoons and burn the mature moss around them,
          which is what keeps the moss in check
-      6. loose blocks near the middle, to discover pushing and carrying early
+      6. loose blocks: one of each material near the middle, and more scattered everywhere
       7. moss patches, on different levels where possible (where moss starts decides where it
          can ever flow to)
       8. the body, standing in the middle
@@ -85,10 +86,13 @@ def build_island(seed: int = 0) -> tuple[WorldState, int]:
                 _place(state, "crystal", (x, y, heights[x, y]), rng)
                 heights[x, y] += 1
 
-    # 6. Loose blocks lying on the ground near the middle, to push and carry.
-    for kind in LOOSE_BLOCKS:
-        x, y = _free_spot(rng, heights, taken, radius=0.5, near=(2, 5))
-        _place(state, kind, (x, y, heights[x, y]), rng)
+    # 6. Loose blocks lying on the ground: one of each near the middle, to discover pushing and
+    #    carrying early, and more scattered everywhere, so there is usually something to work with.
+    scattered = tuple(rng.choice(LOOSE_BLOCKS, size=SCATTERED_BLOCKS))
+    for i, kind in enumerate(LOOSE_BLOCKS + scattered):
+        near = (2, 5) if i < len(LOOSE_BLOCKS) else (3, 13)
+        x, y = _free_spot(rng, heights, taken, radius=0.5, near=near)
+        _place(state, str(kind), (x, y, heights[x, y]), rng)
         heights[x, y] += 1
 
     # 7. Moss patches, each on a level not used yet where possible.

@@ -37,7 +37,7 @@ import numpy as np
 
 from agents.agents import RandomAgent
 from world.body import Action
-from world.laws import DAY_LENGTH, RUNGS
+from world.laws import RUNGS
 from world.senses import SenseSettings, visible_mask
 from world.world import StepResult, World
 
@@ -196,10 +196,9 @@ def measure(make_world, days: float = 3, every: int = 10, horizon: int = 10, age
     """Measure a world. `make_world()` must return a fresh copy of the world each call (it is
     called twice: once for the waiting run, once for the random run)."""
     glow_levels = glow_levels or SenseSettings().glow_levels or 10
-    ticks = int(days * DAY_LENGTH)
-
     # 1. Background: the body only waits.
     world = make_world()
+    ticks = int(days * world.state.tempo.day_length)
     background: Counter = Counter()
     for _ in range(ticks):
         _, events = step_with_events(world, WAIT)
@@ -255,6 +254,7 @@ def main() -> None:
     parser.add_argument("--rung", type=int, default=None, help="run with this rung's laws instead of the saved ones")
     parser.add_argument("--every", type=int, default=10, help="ticks between branch pairs")
     parser.add_argument("--horizon", type=int, default=10, help="ticks each branch runs")
+    parser.add_argument("--agent-seed", type=int, default=0, help="seed for the random agent")
     parser.add_argument("--json", type=Path, default=None, help="also save the card here")
     args = parser.parse_args()
 
@@ -266,7 +266,8 @@ def main() -> None:
             world.laws_on = RUNGS[args.rung]
         return world
 
-    card = measure(make_world, days=args.days, every=args.every, horizon=args.horizon, source=args.world)
+    card = measure(make_world, days=args.days, every=args.every, horizon=args.horizon,
+                   agent_seed=args.agent_seed, source=args.world)
     print(card.report())
     if args.json:
         args.json.write_text(card.to_json())

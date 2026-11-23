@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from world import laws
-from world.state import WorldState
+from world.state import Tempo, WorldState
 from world.world import World
 
 
@@ -54,23 +54,45 @@ def test_every_rung_runs_cleanly():
 # --- sun, flow, radiation ---------------------------------------------------------------
 
 
-def test_the_day_is_two_thirds_light_and_one_third_dark():
-    levels = [laws.sun_level(t) for t in range(laws.DAY_LENGTH)]
+@pytest.mark.parametrize("tempo", [Tempo(), Tempo(day_length=300, daylight=0.5)])
+def test_the_day_is_light_for_the_daylight_share_then_dark(tempo):
+    levels = [laws.sun_level(t, tempo) for t in range(tempo.day_length)]
     lit = sum(level > 0 for level in levels)
-    assert abs(lit / laws.DAY_LENGTH - laws.DAYLIGHT) < 0.01
+    assert abs(lit / tempo.day_length - tempo.daylight) < 0.01
     assert max(levels) == pytest.approx(1.0, abs=1e-3)
 
 
 def test_the_sun_warms_only_the_top_of_each_column():
     state = flat()
+    day = state.tempo.day_length
     put(state, "soil", (3, 3, 2))
     under = state.entity_at("block", (3, 3, 1))
     top = state.entity_at("block", (3, 3, 2))
     before_under, before_top = under.energy, top.energy
-    laws.shine(state, laws.DAY_LENGTH // 3)  # noon
+    laws.shine(state, day // 3)  # noon
     assert top.energy > before_top and under.energy == before_under
-    laws.shine(state, int(laws.DAY_LENGTH * 0.9))  # night
+    laws.shine(state, int(day * 0.9))  # night
     state.check()
+
+
+def test_the_body_catches_more_sunlight_than_the_ground():
+    state = flat()
+    body = put(state, "body", (3, 3, 2))
+    ground = state.entity_at("block", (5, 5, 1))
+    body_before, ground_before = body.energy, ground.energy
+    laws.shine(state, state.tempo.day_length // 3)  # noon
+    caught = body.kind_info.sun_catch
+    assert caught > 1
+    assert body.energy - body_before == pytest.approx(caught * (ground.energy - ground_before))
+    state.check()  # the extra still comes from the sun line of the books
+
+
+def test_a_world_keeps_its_tempo_through_copy_and_save(tmp_path):
+    state = flat()
+    state.tempo = Tempo(day_length=300, sun_power=0.05)
+    assert state.copy().tempo == state.tempo
+    state.save(tmp_path / "s.npz")
+    assert WorldState.load(tmp_path / "s.npz").tempo == state.tempo
 
 
 def test_flow_evens_out_warmth_and_the_poorer_conductor_sets_the_pace():

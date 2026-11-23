@@ -141,6 +141,7 @@ class Kind:
     grow_at: float | None = None  # alive: spreads to a neighbouring spot when warmer than this
     grow_cost: float = 0.0  # ...a new patch takes this much energy from its parent (and starts with it)
     die_at: float = 0.0  # ...and it dies when colder than this
+    sun_catch: float = 1.0  # how much of the sunlight falling on it it takes in (1 = all of it)
     color: str = "#888888"  # base look for the viewer
 
     def __post_init__(self):
@@ -148,6 +149,8 @@ class Kind:
             raise ValueError(f"{self.name}: unknown layer {self.layer!r}")
         if (self.store_size is None) != (self.release_at is None):
             raise ValueError(f"{self.name}: a store needs both store_size and release_at")
+        if self.sun_catch < 0:
+            raise ValueError(f"{self.name}: sun_catch can't be negative")
         if self.consumed_on_pop and self.store_size is None:
             raise ValueError(f"{self.name}: only something with a store can be consumed when it pops")
         for prop in VARYING:
@@ -206,7 +209,7 @@ DEFAULT_RECIPES: tuple[Kind | None, ...] = (
     Kind("soil", "block", mass=(0.5, 0.1), capacity=(10.0, 2.0), conductivity=(0.05, 0.01), color="#8a5a3b"),
     Kind(
         "stone", "block", mass=(1.1, 0.3), capacity=(6.0, 1.0), conductivity=(0.15, 0.03),
-        soften_at=(0.8, 0.05), color="#8d929b",
+        soften_at=(0.6, 0.03), color="#8d929b",  # sun alone peaks near 0.51: softening needs hits or fire
     ),
     Kind("sponge", "block", mass=(0.2, 0.05), capacity=(40.0, 8.0), conductivity=(0.01, 0.003), color="#e6dcb8"),
     # Crystal: charges up and pops (a spark), then recharges. Its pop can set off its neighbours.
@@ -222,9 +225,28 @@ DEFAULT_RECIPES: tuple[Kind | None, ...] = (
         grow_at=0.55, grow_cost=0.4, die_at=0.08, color="#6fa84a",
     ),
     # The body's low conductivity means touching ordinary ground only trickles energy in or out;
-    # the sun is what really charges it.
-    Kind("body", "creature", mass=(0.7, 0.0), capacity=(10.0, 0.0), conductivity=(0.005, 0.0), color="#f2a65a"),
+    # the sun is what really charges it, and it catches sunlight far better than anything else
+    # (otherwise it can only afford a few hits a day).
+    Kind(
+        "body", "creature", mass=(0.7, 0.0), capacity=(10.0, 0.0), conductivity=(0.005, 0.0),
+        sun_catch=5.0, color="#f2a65a",
+    ),
 )
+
+
+@dataclass(frozen=True)
+class Tempo:
+    """How fast the world's clock and its sun run. Part of each world's book, saved with it and
+    fixed for the world's whole life (a different world can have a different tempo)."""
+
+    day_length: int = 900  # ticks per full day and night
+    daylight: float = 2 / 3  # fraction of each day the sun is up
+    sun_power: float = 0.025  # energy per tick reaching the top of a column at noon
+    radiation: float = 0.02  # energy lost per tick per exposed face, times warmth
+
+    def __post_init__(self):
+        if self.day_length < 2 or not 0 < self.daylight < 1 or self.sun_power < 0 or self.radiation < 0:
+            raise ValueError(f"invalid tempo: {self}")
 
 Pos = tuple[int, int, int]  # (x, y, z), z points up
 AXES = ((1, 0, 0), (0, 1, 0), (0, 0, 1))  # the three directions a weld can run (east, north, up)
@@ -385,9 +407,11 @@ class WorldState:
     around inside) and exchange_with_outside (sun in, radiation out).
     """
 
-    def __init__(self, shape: tuple[int, int, int], recipes: tuple[Kind | None, ...] = DEFAULT_RECIPES):
+    def __init__(self, shape: tuple[int, int, int], recipes: tuple[Kind | None, ...] = DEFAULT_RECIPES,
+                 tempo: Tempo = Tempo()):
         self.shape: tuple[int, int, int] = _as_pos(shape)
         self.recipes = _checked_recipes(recipes)
+        self.tempo = tempo
         self.kind_index: dict[str, int] = {kind.name: i for i, kind in enumerate(self.recipes) if kind is not None}
         self.layers: dict[str, dict[str, np.ndarray]] = {
             layer: {field: np.zeros(self.shape, dtype) for field, dtype in FIELDS.items()} for layer in LAYERS
@@ -770,7 +794,7 @@ class WorldState:
 
     def copy(self) -> WorldState:
         """A fully independent copy: changing the copy never affects the original."""
-        clone = WorldState(self.shape, self.recipes)
+        clone = WorldState(self.shape, self.recipes, self.tempo)
         clone.layers = {layer: {f: a.copy() for f, a in arrays.items()} for layer, arrays in self.layers.items()}
         clone.where = dict(self.where)
         clone.next_id = self.next_id
@@ -800,6 +824,7 @@ class WorldState:
             "books": self.books,
             "log": self.log,
             "recipes": [None if kind is None else dataclasses.asdict(kind) for kind in self.recipes],
+            "tempo": dataclasses.asdict(self.tempo),
         }
         arrays = {f"{layer}.{field}": array for layer, fields in self.layers.items() for field, array in fields.items()}
         arrays.update({f"weld.{axis}": welds for axis, welds in enumerate(self.welds)})
@@ -812,7 +837,7 @@ class WorldState:
         if meta["version"] != SAVE_VERSION:
             raise ValueError(f"save is version {meta['version']}, this code reads version {SAVE_VERSION}")
         recipes = tuple(None if d is None else _kind_from_dict(d) for d in meta["recipes"])
-        state = cls(tuple(meta["shape"]), recipes)
+        state = cls(tuple(meta["shape"]), recipes, Tempo(**meta.get("tempo", {})))  # older saves: the default tempo
         for layer, fields in state.layers.items():
             for field, dtype in FIELDS.items():
                 array = arrays[f"{layer}.{field}"]

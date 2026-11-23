@@ -30,7 +30,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from world.body import Feedback
-from world.laws import DAY_LENGTH
 from world.state import LAYERS, Pos, WorldState
 
 LAYER_ORDER = tuple(LAYERS)  # block, cover, creature
@@ -110,7 +109,7 @@ def observe(state: WorldState, body_id: int, tick: int, settings: SenseSettings 
     entity = state.entity_by_id(body_id)
     assert entity is not None
     return Observation(
-        time_of_day=(tick % DAY_LENGTH) / DAY_LENGTH,
+        time_of_day=(tick % state.tempo.day_length) / state.tempo.day_length,
         position=(bx, by, bz),
         energy=entity.energy,
         touch=feedback.sensed() if feedback is not None else None,

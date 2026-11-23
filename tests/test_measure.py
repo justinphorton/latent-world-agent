@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from world.body import Action
-from world.laws import DAY_LENGTH
 from world.measure import EVENT_KINDS, _run_branch, _seen_picture, _pictures_differ, measure, step_with_events
 from world.world import World
 
@@ -48,6 +47,6 @@ def test_a_short_card():
     card = measure(fresh, days=0.1, every=5, horizon=5, source="seed 4")
     assert set(card.checklist) == set(EVENT_KINDS)
     assert card.verbs["wait"].effect == 0 if "wait" in card.verbs else True
-    assert sum(line.tries for line in card.verbs.values()) == int(0.1 * DAY_LENGTH)
+    assert sum(line.tries for line in card.verbs.values()) == int(0.1 * fresh().state.tempo.day_length)
     json.loads(card.to_json())
     assert "Checklist" in card.report()

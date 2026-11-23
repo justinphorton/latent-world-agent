@@ -81,7 +81,7 @@ class World:
     @property
     def sun(self) -> float:
         """Current sun strength, 0 (night) to 1 (noon)."""
-        return laws.sun_level(self.tick)
+        return laws.sun_level(self.tick, self.state.tempo)
 
     def step(self, action: Action | None = None) -> StepResult:
         """Advance one tick. No action means the body waits."""
