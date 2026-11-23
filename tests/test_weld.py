@@ -189,10 +189,10 @@ def test_a_hard_hit_breaks_welds_but_bare_hands_dont():
     state, body = make_world()
     front, side = put(state, "soil", (4, 3, 2)), put(state, "soil", (4, 4, 2))
     state.weld(front.pos, side.pos)
-    do(body, "hit", "e")  # bare hands: 0.5 x 0.7 = 0.35, under WELD_STRENGTH
+    do(body, "hit", "e")  # bare hands: 1.5 x 0.7 = 1.05, under WELD_STRENGTH
     assert welded(state, front, side)
     put(state, "stone", (3, 2, 2), mass=1.2)
-    do(body, "pick_up", "s")  # a stone to hit with: 0.5 x 1.2 = 0.6
+    do(body, "pick_up", "s")  # a stone to hit with: 1.5 x 1.2 = 1.8
     fb = do(body, "hit", "e")
     assert not welded(state, front, side) and "broke loose" in fb.note
 

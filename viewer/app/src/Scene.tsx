@@ -142,6 +142,9 @@ const MAX_EMBERS = 256;
 
 // Whether anything is animating this frame; shadows only need redrawing when something moves.
 const animation = { entities: true, body: true };
+// Where each drawn thing is on screen right now (mid-slide while it moves), by id. Entities owns
+// it; the weld seams read it so they travel with their blocks instead of jumping ahead.
+const SHOWN = new Map<number, Shown>();
 
 function Entities({ init }: { init: Init }) {
   const capacity = init.shape[0] * init.shape[1] * init.shape[2];
@@ -153,7 +156,7 @@ function Entities({ init }: { init: Init }) {
   const SOIL = init.kinds.findIndex((k) => k?.name === "soil");
   const meshes = useRef<(THREE.InstancedMesh | null)[]>([]);
   const ids = useRef<number[][]>(looks.map(() => []));
-  const shown = useRef(new Map<number, Shown>());
+  const shown = useRef(SHOWN);
 
   // Buried blocks aren't drawn in full. Instead each becomes a plain, untextured full-size cube in a
   // darkened version of its colour, so every crack between the rounded blocks ends on something solid.
@@ -322,6 +325,10 @@ function Entities({ init }: { init: Init }) {
         if (!mesh) return;
         mesh.count = counts[lookIndex];
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        // three.js caches the bounds it tests clicks against; instances moved, so forget them
+        // (recomputed lazily on the next click).
+        mesh.boundingSphere = null;
+        mesh.boundingBox = null;
         touched.add(mesh);
       });
       if (shown.current.size > seen.size + 200) {
@@ -819,22 +826,37 @@ function Welds({ init }: { init: Init }) {
   const mesh = useRef<THREE.InstancedMesh | null>(null);
   const geometry = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
   const material = useMemo(() => new THREE.MeshBasicMaterial({ color: SEAM, toneMapped: false }), []);
-  const built = useRef<unknown>(null);
+  // For each weld, the id of the block it starts from (rebuilt when a new tick arrives).
+  const anchors = useRef<{ tick: unknown; ids: (number | undefined)[] }>({ tick: null, ids: [] });
   useFrame(() => {
     const m = mesh.current;
     const tick = store.tick;
-    if (!m || !tick || (built.current === tick && m.visible === !store.agentView)) return;
-    built.current = tick;
+    if (!m || !tick) return;
     m.visible = !store.agentView;
-    const welds = tick.welds ?? [];
-    welds.slice(0, m.instanceMatrix.count).forEach(([x, y, z, axis], i) => {
-      // halfway between the two welded blocks; world axis 0 = east (+x), 1 = north (-z), 2 = up (+y)
-      toScene(init, x + (axis === 0 ? 0.5 : 0), y + (axis === 1 ? 0.5 : 0), z + (axis === 2 ? 0.5 : 0), temp.position);
+    if (!m.visible) return;
+    const welds = (tick.welds ?? []).slice(0, m.instanceMatrix.count);
+    if (anchors.current.tick !== tick) {
+      const at = new Map<string, number>();
+      for (const [id, kindIndex, x, y, z] of tick.entities) {
+        if (init.kinds[kindIndex]?.layer === "block") at.set(`${x},${y},${z}`, id);
+      }
+      anchors.current = { tick, ids: welds.map(([x, y, z]) => at.get(`${x},${y},${z}`)) };
+    }
+    // Every frame, so a seam slides along with its block while the block animates. It sits
+    // halfway to the welded neighbour: world axis 0 = east (+x), 1 = north (-z), 2 = up (+y).
+    welds.forEach(([x, y, z, axis], i) => {
+      const id = anchors.current.ids[i];
+      const entry = id === undefined ? undefined : SHOWN.get(id);
+      if (entry) temp.position.copy(entry.pos);
+      else toScene(init, x, y, z, temp.position);
+      temp.position.x += axis === 0 ? 0.5 : 0;
+      temp.position.z -= axis === 1 ? 0.5 : 0;
+      temp.position.y += axis === 2 ? 0.5 : 0;
       temp.scale.set(axis === 0 ? 0.05 : 0.8, axis === 2 ? 0.05 : 0.8, axis === 1 ? 0.05 : 0.8);
       temp.matrix.compose(temp.position, temp.quaternion.identity(), temp.scale);
       m.setMatrixAt(i, temp.matrix);
     });
-    m.count = Math.min(welds.length, m.instanceMatrix.count);
+    m.count = welds.length;
     m.instanceMatrix.needsUpdate = true;
   });
   return (

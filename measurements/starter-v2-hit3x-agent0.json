@@ -1,0 +1,121 @@
+{
+  "source": "worlds/starter.npz",
+  "laws": [
+    "flow",
+    "gravity",
+    "life",
+    "pop",
+    "radiation",
+    "sun",
+    "weld"
+  ],
+  "days": 3,
+  "background_per_day": {
+    "moved": 0.0,
+    "fall": 0.0,
+    "pop": 74.0,
+    "weld_made": 0.0,
+    "weld_broken": 0.0,
+    "moss_born": 5.333333333333333,
+    "moss_died": 1.6666666666666667
+  },
+  "verbs": {
+    "move": {
+      "tries": 423,
+      "succeeded": 279,
+      "sampled": 46,
+      "effect": 17,
+      "effect_day": 13,
+      "sampled_day": 32,
+      "dice_split": 0,
+      "caused": {
+        "moved": 14
+      }
+    },
+    "push": {
+      "tries": 390,
+      "succeeded": 31,
+      "sampled": 49,
+      "effect": 3,
+      "effect_day": 1,
+      "sampled_day": 31,
+      "dice_split": 0,
+      "caused": {
+        "moved": 3,
+        "moss_died": 1
+      }
+    },
+    "pull": {
+      "tries": 398,
+      "succeeded": 23,
+      "sampled": 35,
+      "effect": 3,
+      "effect_day": 1,
+      "sampled_day": 21,
+      "dice_split": 0,
+      "caused": {
+        "moved": 3,
+        "moss_died": 1
+      }
+    },
+    "pick_up": {
+      "tries": 516,
+      "succeeded": 165,
+      "sampled": 44,
+      "effect": 14,
+      "effect_day": 11,
+      "sampled_day": 29,
+      "dice_split": 0,
+      "caused": {
+        "moved": 14,
+        "fall": 5
+      }
+    },
+    "put_down": {
+      "tries": 483,
+      "succeeded": 163,
+      "sampled": 47,
+      "effect": 20,
+      "effect_day": 17,
+      "sampled_day": 31,
+      "dice_split": 0,
+      "caused": {
+        "moved": 18,
+        "fall": 3,
+        "moss_died": 1
+      }
+    },
+    "hit": {
+      "tries": 396,
+      "succeeded": 89,
+      "sampled": 43,
+      "effect": 6,
+      "effect_day": 6,
+      "sampled_day": 29,
+      "dice_split": 0,
+      "caused": {
+        "pop": 1
+      }
+    },
+    "wait": {
+      "tries": 94,
+      "succeeded": 94,
+      "sampled": 6,
+      "effect": 0,
+      "effect_day": 0,
+      "sampled_day": 4,
+      "dice_split": 0,
+      "caused": {}
+    }
+  },
+  "checklist": {
+    "moved": true,
+    "fall": true,
+    "pop": true,
+    "weld_made": false,
+    "weld_broken": false,
+    "moss_born": false,
+    "moss_died": true
+  },
+  "moss_at_end": 25
+}

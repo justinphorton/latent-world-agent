@@ -85,9 +85,14 @@ function TopBar() {
       >
         heat view
       </button>
-      <button className={agentView ? "on" : ""} onClick={toggleAgentView} title="dim everything the agent can't perceive (G)">
-        agent view
-      </button>
+      <div className="group" title="god view: everything, exactly. agent view: only what the agent perceives, at its own levels (G)">
+        <button className={agentView ? "" : "on"} onClick={() => agentView && toggleAgentView()}>
+          god view
+        </button>
+        <button className={agentView ? "on" : ""} onClick={() => agentView || toggleAgentView()}>
+          agent view
+        </button>
+      </div>
       <div className="group seed">
         <span>seed</span>
         <input value={seed} onChange={(e) => setSeed(e.target.value)} />
@@ -349,6 +354,29 @@ function KeyHints() {
     ["middle-drag", "pan"],
     ["scroll", "zoom to focus"],
   ];
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem("hints-open") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.blur(); // so Space (wait) doesn't press it again
+    setOpen(!open);
+    try {
+      localStorage.setItem("hints-open", open ? "0" : "1");
+    } catch {
+      // no storage (private window): it just won't be remembered
+    }
+  };
+  if (!open) {
+    return (
+      <button className="panel hints-button" onClick={toggle} title="show the controls">
+        ⌨ controls
+      </button>
+    );
+  }
   return (
     <div className="panel hints">
       {hints.map(([key, what]) => (
@@ -356,6 +384,9 @@ function KeyHints() {
           <kbd>{key}</kbd> {what}
         </span>
       ))}
+      <button className="close" onClick={toggle} title="hide the controls">
+        ×
+      </button>
     </div>
   );
 }

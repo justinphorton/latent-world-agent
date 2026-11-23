@@ -46,8 +46,8 @@ CARRY_COST = 0.03  # extra per unit of mass carried on the head, per step
 PUSH_COST = 0.05  # per unit of mass pushed, into the block pushed directly
 LIFT_COST = 0.05  # per unit of mass picked up, into what was picked up
 PLACE_COST = 0.02  # per unit of mass, to set something down carefully, into it
-HIT_ENERGY = 0.5  # per unit of striking mass, out of the body and into the target
-WELD_STRENGTH = 0.5  # a hit with at least this much jolt breaks the target's welds (bare hands: 0.35)
+HIT_ENERGY = 1.5  # per unit of striking mass, out of the body and into the target (bare hands: ~one glow level on soil)
+WELD_STRENGTH = 1.5  # a hit with at least this much jolt breaks the target's welds (bare hands: 1.05; a held stone: ~1.65)
 
 # Four directions, matching how the physics works: energy flows across faces, never corners.
 DIRECTIONS: dict[str, tuple[int, int]] = {"n": (0, 1), "e": (1, 0), "s": (0, -1), "w": (-1, 0)}
