@@ -61,19 +61,21 @@ class World:
     runs without the viewer).
     """
 
-    def __init__(self, seed: int = 0, rung: int = 4, laws: Iterable[str] | None = None, check_every: int = 1):
+    def __init__(self, seed: int = 0, rung: int = 4, laws: Iterable[str] | None = None, check_every: int = 1,
+                 recipes: tuple | None = None):
         chosen = frozenset(laws) if laws is not None else RUNGS[rung]
         unknown = chosen - set(LAWS)
         if unknown:
             raise ValueError(f"unknown laws: {sorted(unknown)}")
         self.laws_on = chosen
         self.check_every = check_every
+        self.recipes = recipes  # None = the default book
         self.reset(seed)
 
     def reset(self, seed: int) -> None:
         """Build a fresh island from a seed and start the clock at sunrise."""
         self.seed = seed
-        self.state, body_id = build_island(seed)
+        self.state, body_id = build_island(seed, getattr(self, "recipes", None))
         self.body = Body(self.state, body_id)
         self.rng = np.random.default_rng([seed, 1])  # the world's own dice (growth), apart from worldgen's
         self.tick = 0

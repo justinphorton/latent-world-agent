@@ -744,7 +744,7 @@ function Lighting() {
 }
 
 // Measures how the viewer performs: refreshed on screen once a second, and reported to the server
-// every 5 seconds, which logs it (logs/viewer-perf.jsonl) so it can be checked without the browser.
+// every 5 seconds, which logs it (local/logs/viewer-perf.jsonl) so it can be checked without the browser.
 function PerfMeter() {
   const { gl } = useThree();
   const window_ = useRef({ frames: 0, time: 0, worst: 0, sinceReport: 0 });

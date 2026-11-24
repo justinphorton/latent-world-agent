@@ -14,7 +14,7 @@ Browser -> server:
              switch (flip between the original and the try) / keep_try / discard_try /
              agent_view (true: also send which things the agent perceives, so the rest can be dimmed)
     inspect  {id}: ask for one entity's full values
-    perf     the browser's frame rate and render stats, appended to logs/viewer-perf.jsonl
+    perf     the browser's frame rate and render stats, appended to local/logs/viewer-perf.jsonl
 
 Run with:  uvicorn viewer.server:app --port 8000
 """
@@ -42,8 +42,8 @@ from world.world import World
 
 BASE_TICKS_PER_SECOND = 5
 MAX_UPDATES_PER_SECOND = 15  # world pictures sent to the browser, at most
-ERROR_LOG = Path(__file__).resolve().parent.parent / "logs" / "viewer-errors.log"
-STARTER = Path(__file__).resolve().parent.parent / "worlds" / "starter.npz"  # the frozen starter island
+ERROR_LOG = Path(__file__).resolve().parent.parent / "local" / "logs" / "viewer-errors.log"
+STARTER = Path(__file__).resolve().parent.parent / "world" / "worlds" / "starter.npz"  # the frozen starter island
 SNAPSHOT_EVERY = 100  # ticks between replay snapshots
 HISTORY_TICKS = 2700  # how far back replay can go (3 days at the default tempo)
 
@@ -165,7 +165,7 @@ class Session:
         except Exception as error:
             self.running = False
             self.error = f"{type(error).__name__}: {error}"
-            ERROR_LOG.parent.mkdir(exist_ok=True)
+            ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
             with ERROR_LOG.open("a") as f:
                 f.write(f"{datetime.now().isoformat(timespec='seconds')} tick {self.world.tick}\n")
                 f.write(traceback.format_exc() + "\n")
@@ -400,12 +400,12 @@ def _smooth(previous: float, latest: float) -> float:
     return latest if previous == 0 else previous * 0.9 + latest * 0.1
 
 
-PERF_LOG = Path(__file__).resolve().parent.parent / "logs" / "viewer-perf.jsonl"
+PERF_LOG = Path(__file__).resolve().parent.parent / "local" / "logs" / "viewer-perf.jsonl"
 
 
 def _log_perf(report: dict) -> None:
     """Append the browser's performance report (one JSON line every few seconds)."""
-    PERF_LOG.parent.mkdir(exist_ok=True)
+    PERF_LOG.parent.mkdir(parents=True, exist_ok=True)
     report = {"time": datetime.now().isoformat(timespec="seconds"), **{k: v for k, v in report.items() if k != "type"}}
     with PERF_LOG.open("a") as f:
         f.write(json.dumps(report) + "\n")

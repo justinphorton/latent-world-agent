@@ -109,7 +109,7 @@ function TopBar() {
         <span className="muted">tick {tick.tick}</span>
       </div>
       {tick.error && (
-        <span className="world-error" title="details in logs/viewer-errors.log">
+        <span className="world-error" title="details in local/logs/viewer-errors.log">
           ⚠ paused: {tick.error}
         </span>
       )}

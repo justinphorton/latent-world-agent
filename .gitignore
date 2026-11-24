@@ -1,5 +1,5 @@
 # design notes, kept local
-context/
+local/
 
 # python
 .venv/
@@ -8,8 +8,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
-# logs and saved worlds written while running
-logs/
+# saved worlds written while running (logs go in local/)
 saves/
 
 # node / viewer

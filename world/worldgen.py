@@ -5,7 +5,7 @@ ingredient, placed somewhere different, so islands share the same materials and 
 the same map (the "tier 2" variation: did an agent learn the world, or just this map?).
 
 Worlds worth keeping (a starter island, interesting islands found later) are saved as files in
-worlds/ and loaded with World.load, so they stay frozen even when this code changes. Later, a
+world/worlds/ and loaded with World.load, so they stay frozen even when this code changes. Later, a
 bigger pipeline can sit on top of this: generate many islands, simulate them, score how much
 happens and how balanced it is, and save the best ones.
 """
@@ -27,8 +27,9 @@ SCATTERED_BLOCKS = 16  # more loose blocks, of random materials, lying all over 
 MOSS_PATCHES = 3  # starting moss, on different levels where possible
 
 
-def build_island(seed: int = 0) -> tuple[WorldState, int]:
-    """Build an island from its seed. Returns the state and the id of the body.
+def build_island(seed: int = 0, recipes: tuple | None = None) -> tuple[WorldState, int]:
+    """Build an island from its seed (and optionally a different recipe book, for trying other
+    numbers). Returns the state and the id of the body.
 
     Built in passes; `heights` tracks how many blocks each column has, so later passes know where
     the top is, and `taken` keeps the big features from landing on top of each other:
@@ -45,7 +46,7 @@ def build_island(seed: int = 0) -> tuple[WorldState, int]:
       8. the body, standing in the middle
     """
     rng = np.random.default_rng(seed)
-    state = WorldState(SIZE)
+    state = WorldState(SIZE) if recipes is None else WorldState(SIZE, recipes)
     width, depth, _ = SIZE
     taken: list[tuple[tuple[int, int], float]] = []  # (center, radius) of each big feature
 

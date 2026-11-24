@@ -1,4 +1,4 @@
-"""How eventful a world is, in numbers: the card from context/worldgen-redesign.md.
+"""How eventful a world is, in numbers: the card from the worldgen redesign note.
 
 Three measurements, all by running the world:
 
@@ -26,8 +26,8 @@ A separate health check runs the world untouched for many days and prints one li
 (moss alive, born, burned, starved, pops, welds, the biggest welded group, energy), to see
 whether the world stays balanced over the long run.
 
-Run it:  python -m world.measure [worlds/starter.npz] [--days 3] [--rung 4]
-         python -m world.measure [worlds/starter.npz] --health 20
+Run it:  python -m world.measure [world/worlds/starter.npz] [--days 3] [--rung 4]
+         python -m world.measure [world/worlds/starter.npz] --health 20
 """
 
 from __future__ import annotations
@@ -320,7 +320,7 @@ def health_report(lines: list[DayLine]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure how eventful a world is.")
-    parser.add_argument("world", nargs="?", default="worlds/starter.npz", help="a saved world (.npz) or a seed number")
+    parser.add_argument("world", nargs="?", default="world/worlds/starter.npz", help="a saved world (.npz) or a seed number")
     parser.add_argument("--days", type=float, default=3)
     parser.add_argument("--rung", type=int, default=None, help="run with this rung's laws instead of the saved ones")
     parser.add_argument("--every", type=int, default=10, help="ticks between branch pairs")
