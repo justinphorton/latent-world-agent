@@ -215,14 +215,16 @@ DEFAULT_RECIPES: tuple[Kind | None, ...] = (
     # Crystal: charges up and pops (a spark), then recharges. Its pop can set off its neighbours.
     Kind(
         "crystal", "block", mass=(0.6, 0.1), capacity=(2.0, 0.4), conductivity=(0.12, 0.02),
-        store_size=(2.5, 0.4), release_at=(0.42, 0.04), refill_rate=0.05, color="#9fd8e8",
+        store_size=(2.5, 0.4), release_at=(0.40, 0.04), refill_rate=0.05, color="#9fd8e8",
     ),
     # Moss: alive. Spreads when well fed, dies when starving, slowly banks fuel, and burns
     # (pops and is used up) when something pushes it past its pop point.
     Kind(
         "moss", "cover", mass=(0.05, 0.01), capacity=(1.0, 0.2), conductivity=(0.02, 0.005),
-        store_size=(1.3, 0.15), release_at=(0.74, 0.03), refill_rate=0.002, consumed_on_pop=True,
-        grow_at=0.55, grow_cost=0.4, die_at=0.08, color="#6fa84a",
+        # Tuned (Nov 24, 80-day sweep) so fire, not starvation, keeps moss in separate patches:
+        # it catches fire fairly easily and spreads slowly, so burned ground stays open a while.
+        store_size=(1.3, 0.15), release_at=(0.60, 0.03), refill_rate=0.002, consumed_on_pop=True,
+        grow_at=0.62, grow_cost=0.4, die_at=0.08, color="#6fa84a",
     ),
     # The body's low conductivity means touching ordinary ground only trickles energy in or out;
     # the sun is what really charges it, and it catches sunlight far better than anything else
