@@ -2,6 +2,8 @@
 
 A small block world for studying agents that learn how a world works by acting in it.
 
+![The starter island in the viewer: soil terraces, a stone outcrop, crystals, a sponge pocket and moss patches](research/images/island.png)
+
 The world has hidden properties (how heavy a block is, how well it holds heat, when it will
 pop) and simple laws that act on them. An agent never reads those numbers. It only sees surfaces
 and glow, and feels strain and warmth when it acts, so anything it learns about the world it has
